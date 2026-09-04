@@ -9,6 +9,8 @@ export const FREEBUFF_GLM_V53_FLASH_MODEL_ID = "z-ai/glm-5.3-flash";
 /** Official Freebuff root agent paired with GLM 5.3 Flash. */
 export const FREEBUFF_GLM_V53_FLASH_AGENT = "base3-free-glm-5-3-flash";
 export const FREEBUFF_GLM_V53_FLASH_MODEL_SLUG = "freebuff/glm-5.3-flash";
+/** Conservative per-message safety limit based on the observed Freebuff Web input boundary. */
+export const FREEBUFF_INPUT_CHAR_LIMIT = 32_000;
 
 export type FreebuffCodexEffort = "medium";
 

@@ -17,6 +17,10 @@ $HOME/.local/bin/codex-freebuff-web login
 `codex-freebuff-web login` 会显示登录网址，并在 macOS 尝试打开浏览器。完成登录后，bridge
 会将官方兼容 credentials 保存到 `~/.config/manicode/credentials.json`。
 
+bridge 对每次送出的最新 user/agent message 套用 32,000 字符安全上限，依据 Freebuff Web
+输入边界作保守保护；超出时会要求缩短消息后重试，不会静默截断内容。官方 CLI 公开源码目前
+没有固定的 prompt 字符上限，主要依赖 token context window 与 context pruning。
+
 Web Chat 是独立的网页入口：
 
 ```bash

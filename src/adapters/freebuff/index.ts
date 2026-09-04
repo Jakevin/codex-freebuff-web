@@ -17,7 +17,7 @@ import type {
   CodexUsage,
 } from "../../types";
 import { estimateTokens } from "../../lib/token-estimate";
-import { FREEBUFF_AGENT, FREEBUFF_MODEL_ID } from "../../freebuff-models";
+import { FREEBUFF_AGENT, FREEBUFF_INPUT_CHAR_LIMIT, FREEBUFF_MODEL_ID } from "../../freebuff-models";
 import { freebuffRootAgentDefinitionFor } from "./agent-definition";
 import { freebuffLoginRequiredMessage } from "../../freebuff-auth";
 import {
@@ -140,6 +140,14 @@ function contentText(content: string | CodexContentPart[]): string {
   return content.map(part => part.type === "text" ? part.text : "[image attached]").join("\n");
 }
 
+type FreebuffInputMessage = Extract<CodexMessage, { role: "user" | "agentMessage" }>;
+
+function currentInputMessage(parsed: CodexParsedRequest): FreebuffInputMessage | undefined {
+  return [...parsed.context.messages].reverse().find(
+    (message): message is FreebuffInputMessage => message.role === "user" || message.role === "agentMessage",
+  );
+}
+
 function formatMessage(message: CodexMessage): string {
   const role = message.role === "agentMessage" ? `agent:${message.author ?? "unknown"}` : message.role;
   if (message.role === "assistant") {
@@ -172,9 +180,7 @@ function compilePrompt(parsed: CodexParsedRequest): { prompt: string; content?: 
     sections.push(`[system]\n${parsed.context.systemPrompt.join("\n\n")}`);
   }
   sections.push(...parsed.context.messages.map(formatMessage).filter(Boolean));
-  const current = [...parsed.context.messages].reverse().find(
-    message => message.role === "user" || message.role === "agentMessage",
-  );
+  const current = currentInputMessage(parsed);
   const images = current && typeof current.content !== "string"
     ? current.content.map(dataImage).filter((part): part is MessageContent => part !== undefined)
     : [];
@@ -251,6 +257,19 @@ export function createFreebuffAdapter(
     name: "freebuff",
     async runTurn(parsed: CodexParsedRequest, incoming: IncomingMeta, emit): Promise<void> {
       const context = executionContext(parsed, provider);
+      const current = currentInputMessage(parsed);
+      const currentInputChars = current ? contentText(current.content).length : 0;
+      if (currentInputChars > FREEBUFF_INPUT_CHAR_LIMIT) {
+        emit({
+          type: "error",
+          message: `This Freebuff message contains ${currentInputChars.toLocaleString("en-US")} characters, exceeding the bridge safety limit of ${FREEBUFF_INPUT_CHAR_LIMIT.toLocaleString("en-US")} characters per message based on the Freebuff Web input boundary. Shorten the current message and retry.`,
+          status: 400,
+          errorType: "invalid_request_error",
+          code: "context_length_exceeded",
+          retryable: false,
+        });
+        return;
+      }
       const { prompt, content } = compilePrompt(parsed);
       const controller = new AbortController();
       const forwardAbort = () => controller.abort(incoming.abortSignal?.reason);

@@ -1,6 +1,6 @@
 {
   "name": "codex-freebuff-web",
-  "version": "5.0.4",
+  "version": "5.0.5",
   "private": true,
   "description": "A local Responses bridge for Freebuff's official free CLI session and Web Chat entry point.",
   "repository": {

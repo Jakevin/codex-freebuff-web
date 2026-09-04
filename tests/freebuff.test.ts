@@ -23,10 +23,11 @@ import {
   FREEBUFF_GLM_V53_FLASH_AGENT,
   FREEBUFF_GLM_V53_FLASH_MODEL_ID,
   FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
+  FREEBUFF_INPUT_CHAR_LIMIT,
   requireFreebuffModelRoute,
 } from "../src/freebuff-models";
 
-function parsedRequest(model = "freebuff/base") {
+function parsedRequest(model = "freebuff/base", text = "Explain the next implementation step.") {
   return parseRequest({
     model,
     stream: false,
@@ -34,7 +35,7 @@ function parsedRequest(model = "freebuff/base") {
     input: [{
       type: "message",
       role: "user",
-      content: [{ type: "input_text", text: "Explain the next implementation step." }],
+      content: [{ type: "input_text", text }],
     }],
   });
 }
@@ -118,6 +119,51 @@ test("Freebuff adapter forwards the native SDK run and emits its text output", a
     ]);
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
     expect((events.at(-1) as Extract<AdapterEvent, { type: "done" }>).usage?.estimated).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Freebuff rejects an over-limit current message before session admission", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-freebuff-input-limit-"));
+  try {
+    const config = defaultConfig("full");
+    config.freebuff = { apiKey: "cb-test-key", cwd: root };
+    let sessionCalls = 0;
+    let clientCalls = 0;
+    const adapter = createFreebuffAdapter(providerConfig(config), {
+      ensureSession: async () => {
+        sessionCalls += 1;
+        return testSession();
+      },
+      createClient() {
+        clientCalls += 1;
+        return {
+          async run(): Promise<RunState> {
+            throw new Error("Freebuff SDK should not run for an over-limit message");
+          },
+        } as Pick<CodebuffClient, "run">;
+      },
+    });
+    const events: AdapterEvent[] = [];
+
+    await adapter.runTurn(
+      parsedRequest("freebuff/base", "x".repeat(FREEBUFF_INPUT_CHAR_LIMIT + 1)),
+      { headers: new Headers() },
+      event => events.push(event),
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "error",
+      status: 400,
+      errorType: "invalid_request_error",
+      code: "context_length_exceeded",
+      retryable: false,
+    });
+    expect((events[0] as Extract<AdapterEvent, { type: "error" }>).message).toContain("32,001");
+    expect(sessionCalls).toBe(0);
+    expect(clientCalls).toBe(0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

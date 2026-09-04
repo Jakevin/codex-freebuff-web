@@ -67,6 +67,10 @@ bun run src/cli.ts serve
 `freebuff/glm-5.3-flash` 是 bridge 的 Codex route，底層分別使用官方 Freebuff model
 `deepseek/deepseek-v4-flash` 與 `z-ai/glm-5.3-flash`。
 
+目前 bridge 對每次送出的最新 user/agent message 套用 32,000 字元安全上限，這是依 Freebuff Web
+輸入邊界採用的保守保護；超過時會回傳輸入錯誤，要求縮短訊息後再重試，不會靜默截斷內容。官方 CLI 公開原始碼
+目前沒有固定的 prompt 字元上限，主要依賴 token context window 與 context pruning。
+
 ## Codex 內的 Freebuff 廣告
 
 每個成功的 Freebuff 回覆後會顯示一個清楚標示為 `Ad · Freebuff` 的文字廣告。bridge 會優先使用
