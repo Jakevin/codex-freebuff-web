@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } fr
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { defaultBrokerEndpoint } from "../src/config";
 import { VERSION } from "../src/version";
 
 const require = createRequire(import.meta.url);
@@ -98,7 +99,7 @@ const config = {
   browserInteractionMode: "automatic",
   chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   storageStatePath: join(appHome, "storage-state.json"),
-  brokerSocketPath: join(appHome, "runtime", "turn-broker.sock"),
+  brokerSocketPath: defaultBrokerEndpoint(appHome, process.platform),
   headed: true,
   solAvailable: true,
   proAvailable: false,
