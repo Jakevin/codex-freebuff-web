@@ -2,7 +2,7 @@
 set -eu
 
 REPOSITORY="${CODEX_FREEBUFF_WEB_REPOSITORY:-Jakevin/codex-freebuff-web}"
-VERSION="${CODEX_FREEBUFF_WEB_VERSION:-5.0.3}"
+VERSION="${CODEX_FREEBUFF_WEB_VERSION:-5.0.4}"
 BIN_DIR="${CODEX_FREEBUFF_WEB_BIN_DIR:-$HOME/.local/bin}"
 LIB_DIR="${CODEX_FREEBUFF_WEB_LIB_DIR:-$HOME/.local/lib/codex-freebuff-web}"
 DOC_DIR="${CODEX_FREEBUFF_WEB_DOC_DIR:-$HOME/.local/share/doc/codex-freebuff-web}"

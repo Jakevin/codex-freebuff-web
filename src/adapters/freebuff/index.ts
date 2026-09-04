@@ -18,7 +18,7 @@ import type {
 } from "../../types";
 import { estimateTokens } from "../../lib/token-estimate";
 import { FREEBUFF_AGENT, FREEBUFF_MODEL_ID } from "../../freebuff-models";
-import { FREEBUFF_ROOT_AGENT_DEFINITION } from "./agent-definition";
+import { freebuffRootAgentDefinitionFor } from "./agent-definition";
 import { freebuffLoginRequiredMessage } from "../../freebuff-auth";
 import {
   fetchFreebuffAd,
@@ -294,14 +294,16 @@ export function createFreebuffAdapter(
             fetchImpl: dependencies.fetchImpl,
           });
         }
+        const agent = provider.freebuff?.agent ?? FREEBUFF_AGENT;
+        const rootAgentDefinition = freebuffRootAgentDefinitionFor(agent);
         const clientOptions: CodebuffClientOptions = {
           // The official CLI passes its saved authToken through the SDK's apiKey field. This is
           // an SDK naming detail; users do not create or paste an API key in this flow.
           apiKey: authToken,
           cwd: context.cwd,
           maxAgentSteps: provider.freebuff?.maxAgentSteps ?? 20,
-          ...(provider.freebuff?.agent === FREEBUFF_AGENT || !provider.freebuff?.agent
-            ? { agentDefinitions: [FREEBUFF_ROOT_AGENT_DEFINITION] }
+          ...(rootAgentDefinition
+            ? { agentDefinitions: [rootAgentDefinition] }
             : {}),
           ...(context.sandbox === "readOnly" ? { overrideTools: readOnlyOverrides() } : {}),
         };
@@ -341,7 +343,7 @@ export function createFreebuffAdapter(
             ...(parsed.options.reasoning ? { reasoningEffort: parsed.options.reasoning } : {}),
           },
           () => client.run({
-            agent: provider.freebuff?.agent ?? FREEBUFF_AGENT,
+            agent,
             prompt,
             ...(content ? { content } : {}),
             signal: controller.signal,

@@ -48,7 +48,7 @@ function routedModelPriority(
   const priority = modelPriority(template);
   if (priority === undefined
     || config.subagentProtocol !== "compatibility-v1"
-    || route.slug !== "freebuff/base") return priority;
+    || !route.slug.startsWith(FREEBUFF_MODEL_PREFIX)) return priority;
   if (priority === Number.MAX_SAFE_INTEGER) {
     throw new Error("Native Codex model template priority cannot reserve the Compatibility V1 roster");
   }

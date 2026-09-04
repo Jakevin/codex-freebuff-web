@@ -22,8 +22,8 @@ codex-freebuff-web freebuff ──▶ official interactive Freebuff CLI
 codex-freebuff-web open chat ──▶ https://freebuff.com/chat
 ```
 
-這個 bridge 保留 Codex 的原生 Responses/task 介面，並把 `freebuff/base` 對應到官方
-Freebuff 免費 coding session。登入使用官方的瀏覽器裝置登入流程；使用者只要人工登入一次，
+這個 bridge 保留 Codex 的原生 Responses/task 介面，並把 `freebuff/base` 與
+`freebuff/glm-5.3-flash` 對應到官方 Freebuff 免費 coding session。登入使用官方的瀏覽器裝置登入流程；使用者只要人工登入一次，
 不需要建立或貼上 API Key，也不需要另外安裝官方 Freebuff CLI。
 
 ## 快速開始
@@ -62,9 +62,10 @@ macOS 會在 setup 時嘗試安裝背景服務；其他平台請另外保持 bri
 bun run src/cli.ts serve
 ```
 
-重啟 Codex 後，模型選單會出現 `Freebuff — DeepSeek V4 Flash`。本地顯示的
-`freebuff/base` 是 bridge 的 Codex route，底層使用官方 Freebuff model
-`deepseek/deepseek-v4-flash` 與官方 CLI 目前的 free agent。
+重啟 Codex 後，模型選單會出現 `Freebuff — DeepSeek V4 Flash` 與
+`Freebuff — GLM 5.3 Flash`。本地顯示的 `freebuff/base` 與
+`freebuff/glm-5.3-flash` 是 bridge 的 Codex route，底層分別使用官方 Freebuff model
+`deepseek/deepseek-v4-flash` 與 `z-ai/glm-5.3-flash`。
 
 ## Codex 內的 Freebuff 廣告
 

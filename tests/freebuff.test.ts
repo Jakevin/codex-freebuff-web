@@ -18,6 +18,13 @@ import { installRoute } from "../src/codex-integration-route";
 import { parseRequest } from "../src/responses/parser";
 import { responseRequest } from "../src/server";
 import type { AdapterEvent } from "../src/types";
+import {
+  availableFreebuffModelRoutes,
+  FREEBUFF_GLM_V53_FLASH_AGENT,
+  FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+  FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
+  requireFreebuffModelRoute,
+} from "../src/freebuff-models";
 
 function parsedRequest(model = "freebuff/base") {
   return parseRequest({
@@ -281,6 +288,89 @@ test("Responses routes the Freebuff model to the SDK adapter", async () => {
   expect(body.output.some(item => item.content?.some(part => part.text === "Hello from Freebuff."))).toBe(true);
 });
 
+test("Freebuff exposes and routes the official GLM 5.3 Flash model", async () => {
+  expect(availableFreebuffModelRoutes().map(route => route.slug)).toEqual([
+    "freebuff/base",
+    FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
+  ]);
+  expect(requireFreebuffModelRoute(FREEBUFF_GLM_V53_FLASH_MODEL_SLUG)).toMatchObject({
+    providerModel: FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+    agent: FREEBUFF_GLM_V53_FLASH_AGENT,
+  });
+
+  const config = defaultConfig("full");
+  let adapterProvider: ReturnType<typeof providerConfig> | undefined;
+  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
+      stream: false,
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Say hello" }] }],
+    }),
+  }), config, provider => {
+    adapterProvider = provider;
+    return {
+      name: "freebuff-glm-test-adapter",
+      async runTurn(_parsed, _incoming, emit) {
+        emit({ type: "text_delta", text: "Hello from GLM.", phase: "final_answer" });
+        emit({ type: "done", stopReason: "stop", endTurn: true });
+      },
+    };
+  });
+
+  expect(response.status).toBe(200);
+  expect(adapterProvider?.freebuff).toMatchObject({
+    model: FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+    agent: FREEBUFF_GLM_V53_FLASH_AGENT,
+  });
+  const body = await response.json() as { model: string };
+  expect(body.model).toBe(FREEBUFF_GLM_V53_FLASH_MODEL_SLUG);
+});
+
+test("Freebuff adapter supplies the GLM root definition to the SDK", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-freebuff-glm-"));
+  try {
+    const config = defaultConfig("full");
+    config.freebuff = {
+      apiKey: "cb-test-key",
+      cwd: root,
+      model: FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+      agent: FREEBUFF_GLM_V53_FLASH_AGENT,
+    };
+    const provider = providerConfig(config);
+    let clientOptions: CodebuffClientOptions | undefined;
+    let runOptions: RunOptions | undefined;
+    const adapter = createFreebuffAdapter(provider, {
+      ensureSession: async (_token, model) => {
+        expect(model).toBe(FREEBUFF_GLM_V53_FLASH_MODEL_ID);
+        return { instanceId: "test-glm-instance", model };
+      },
+      createClient(options) {
+        clientOptions = options;
+        return {
+          async run(options: RunOptions): Promise<RunState> {
+            runOptions = options;
+            return { output: { type: "lastMessage", value: "GLM is ready." } };
+          },
+        } as Pick<CodebuffClient, "run">;
+      },
+    });
+
+    await adapter.runTurn(parsedRequest(FREEBUFF_GLM_V53_FLASH_MODEL_SLUG), { headers: new Headers() }, () => {});
+
+    expect(clientOptions?.agentDefinitions).toEqual([
+      expect.objectContaining({
+        id: FREEBUFF_GLM_V53_FLASH_AGENT,
+        model: FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+      }),
+    ]);
+    expect(runOptions?.agent).toBe(FREEBUFF_GLM_V53_FLASH_AGENT);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Freebuff Codex integration does not manage ChatGPT voice routing", () => {
   const original = [
     'model = "gpt-5.6-sol"',
@@ -347,7 +437,13 @@ test("Freebuff integrates with a CC Switch custom provider without touching its 
     });
     expect(journal.installed.model_catalog_json).toBe(getCodexManagedModelCatalogPath());
     expect(JSON.parse(readFileSync(getCodexManagedModelCatalogPath(), "utf8"))).toMatchObject({
-      models: expect.arrayContaining([expect.objectContaining({ slug: "freebuff/base" })]),
+      models: expect.arrayContaining([
+        expect.objectContaining({ slug: "freebuff/base" }),
+        expect.objectContaining({
+          slug: FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
+          display_name: "Freebuff — GLM 5.3 Flash",
+        }),
+      ]),
     });
 
     expect(uninstallCodexIntegration()).toEqual({ changed: true });

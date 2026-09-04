@@ -409,7 +409,7 @@ export async function responseRequest(
     parsed.context.messages.push({ role: "user", content: COMPACT_PROMPT, timestamp: Date.now() });
   }
 
-  const provider = providerConfig(config);
+  const provider = providerConfig(config, route);
   const traceId = freebuffTraceId(provider, parsed);
   if (provider.freebuff) provider.freebuff.traceId = traceId;
   const adapter = adapterFactory(provider);

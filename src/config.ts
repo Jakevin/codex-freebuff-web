@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 import { resolveFreebuffAuth } from "./freebuff-auth";
-import { FREEBUFF_AGENT, FREEBUFF_MODEL_ID } from "./freebuff-models";
+import { FREEBUFF_AGENT, FREEBUFF_MODEL_ID, type FreebuffModelRoute } from "./freebuff-models";
 
 export type RuntimeMode = "browser-only" | "full";
 export type RuntimeProvider = "freebuff";
@@ -629,12 +629,13 @@ export function saveConfig(config: AppConfig): void {
   atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(config, null, 2)}\n`, original));
 }
 
-export function providerConfig(config: AppConfig): CodexProviderConfig {
-  const configuredAgent = config.freebuff?.agent?.trim();
+export function providerConfig(config: AppConfig, route?: FreebuffModelRoute): CodexProviderConfig {
+  const configuredAgent = route?.agent ?? config.freebuff?.agent?.trim();
   const agent = !configuredAgent || configuredAgent === "codebuff/base2@latest"
     ? FREEBUFF_AGENT
     : configuredAgent;
-  const model = config.freebuff?.model?.trim() || FREEBUFF_MODEL_ID;
+  const configuredModel = route?.providerModel ?? config.freebuff?.model?.trim();
+  const model = configuredModel || FREEBUFF_MODEL_ID;
   const auth = resolveFreebuffAuth({
     credentialsPath: config.freebuff?.credentialsPath,
     apiKey: config.freebuff?.apiKey,
