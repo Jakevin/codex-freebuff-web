@@ -25,7 +25,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
-      - run: bun run verify
+      - name: Verify source and runtime
+        env:
+          CODEX_FREEBUFF_WEB_SKIP_AUDIT: "1"
+        run: bun run verify
 
   actionlint:
     runs-on: ubuntu-latest

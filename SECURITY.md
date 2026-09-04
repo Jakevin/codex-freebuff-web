@@ -12,8 +12,11 @@ action control, Codex sandboxing, and approvals aligned with the workspace's ris
 
 The stable MCP v1 SDK currently declares the vulnerable `@hono/node-server` 1.x range even though
 this project uses only its stdio transport. The lockfile explicitly resolves that unused HTTP
-adapter to patched 2.0.12. `bun audit`, the MCP protocol test, and the compiled-binary smoke test are
-release gates; remove the override when the stable SDK itself moves to the patched major.
+adapter to patched 2.0.12. The Freebuff SDK currently pins an older AI provider-utils major; forcing
+the newer major breaks the SDK's exported tool factory, so the lockfile instead pins `undici` to the
+patched 6.28.0 line. Run `bun run audit` before promoting a release. CI and release builds skip the
+network-dependent audit request because the npm advisory endpoint can return transient 503/timeouts;
+that skip does not suppress the local audit command or its findings.
 
 Once the GitHub repository is public, use its private Security Advisory reporting flow. Until that
 is enabled, do not publish a proof of concept that exposes credentials or arbitrary local tool
