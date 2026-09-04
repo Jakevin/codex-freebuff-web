@@ -14,13 +14,13 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            runtime_asset: codex-chatgpt-web-darwin-arm64.tar.gz
+            runtime_asset: codex-freebuff-web-darwin-arm64.tar.gz
           - runner: macos-15-intel
-            runtime_asset: codex-chatgpt-web-darwin-amd64.tar.gz
+            runtime_asset: codex-freebuff-web-darwin-amd64.tar.gz
           - runner: ubuntu-latest
-            runtime_asset: codex-chatgpt-web-linux-amd64.tar.gz
+            runtime_asset: codex-freebuff-web-linux-amd64.tar.gz
           - runner: windows-latest
-            runtime_asset: codex-chatgpt-web-windows-amd64.zip
+            runtime_asset: codex-freebuff-web-windows-amd64.zip
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v6
@@ -28,61 +28,24 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: launcher
       - name: Prepare AVX2-independent Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
-      - name: Prepare compatible Linux libnotify
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
-          ./scripts/prepare-linux-libnotify.sh
-      - name: Prepare owned AppImage toolset
-        if: runner.os == 'Linux'
-        run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - run: bun run verify
-      - run: bun run app:package
-      - name: Verify Linux AppImage ABI on current Arch
-        if: runner.os == 'Linux'
-        run: |
-          artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"
-          test -n "$artifact"
-          docker run --rm -v "$PWD:/work:ro" -e APPIMAGE_PATH="/work/$artifact" archlinux:base \
-            sh -lc 'pacman -Sy --noconfirm binutils file glibc alsa-lib at-spi2-core cairo cups gtk3 libx11 libxcb libxcomposite libxdamage libxext libxfixes libxkbcommon libxrandr mesa nspr nss pango >/dev/null && /work/launcher/scripts/smoke-linux-appimage-symbols.sh "$APPIMAGE_PATH"'
-      - name: Ensure virtual display is available
-        if: runner.os == 'Linux'
-        run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
-      - run: bun run app:smoke
-      - name: Verify embedded macOS runtime signature
-        if: runner.os == 'macOS'
-        run: codesign --verify --deep --strict launcher/build/runtime/runtime/bun
-      - name: Verify packaged macOS application signature
-        if: runner.os == 'macOS'
-        run: |
-          archive="$(find launcher/artifacts -maxdepth 1 -name '*-mac-*.zip' -print -quit)"
-          test -n "$archive"
-          stage="$(mktemp -d)"
-          ditto -x -k "$archive" "$stage"
-          codesign --verify --deep --strict --verbose=2 "$stage/Codex Web GPT.app"
+      - run: bun run build
       - name: Archive runtime
         if: runner.os != 'Windows'
-        run: tar -czf "${{ matrix.runtime_asset }}" -C launcher/build/runtime .
+        run: tar -czf "${{ matrix.runtime_asset }}" -C dist/runtime .
       - name: Archive Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path launcher/build/runtime/* -DestinationPath "${{ matrix.runtime_asset }}"
+        run: Compress-Archive -Path dist/runtime/* -DestinationPath "${{ matrix.runtime_asset }}"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.runner }}
           path: |
             ${{ matrix.runtime_asset }}
-            launcher/artifacts/*.dmg
-            launcher/artifacts/*.zip
-            launcher/artifacts/*.exe
-            launcher/artifacts/*.AppImage
           if-no-files-found: error
 
   publish:
@@ -94,8 +57,6 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: launcher
       - run: bun run licenses
       - uses: actions/download-artifact@v4
         with:
@@ -109,11 +70,8 @@ jobs:
         run: |
           cp LICENSE release-assets/LICENSE
           cp LICENSES/Bun-1.4.0.md release-assets/Bun-1.4.0.md
-          cp LICENSES/libnotify-0.8.7-LGPL-2.1.md release-assets/libnotify-0.8.7-LGPL-2.1.md
           cp dist/THIRD_PARTY_NOTICES.txt release-assets/THIRD_PARTY_NOTICES.txt
           cp scripts/install.sh release-assets/install.sh
-          cp scripts/install-launcher.sh release-assets/install-launcher.sh
-          cp scripts/install-launcher.ps1 release-assets/install-launcher.ps1
       - name: Flatten release assets
         run: |
           cd release-assets

@@ -49,7 +49,7 @@ function readRuntimeManifest(runtimeRoot, { version, platform, arch, bundleId })
       `Runtime manifest is invalid: ${manifestPath}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  const expectedLauncher = `bin/${platform === "win32" ? "codex-chatgpt-web.cmd" : "codex-chatgpt-web"}`;
+  const expectedLauncher = `bin/${platform === "win32" ? "codex-freebuff-web.cmd" : "codex-freebuff-web"}`;
   if (manifest?.schemaVersion !== 2
     || manifest.appVersion !== version
     || manifest.platform !== platform
@@ -57,7 +57,6 @@ function readRuntimeManifest(runtimeRoot, { version, platform, arch, bundleId })
     || manifest.launcher !== expectedLauncher
     || manifest.entrypoint !== "app/cli.js"
     || typeof manifest.bunVersion !== "string"
-    || typeof manifest.playwright !== "string"
     || !SHA256_PATTERN.test(manifest.bundleId)
     || (bundleId && manifest.bundleId !== bundleId)
     || !Array.isArray(manifest.files)
@@ -71,7 +70,6 @@ function readRuntimeManifest(runtimeRoot, { version, platform, arch, bundleId })
       arch: manifest.arch,
       launcher: manifest.launcher,
       entrypoint: manifest.entrypoint,
-      playwright: manifest.playwright,
       fileCount: Array.isArray(manifest.files) ? manifest.files.length : null,
     } : manifest;
     throw new Error(
@@ -150,7 +148,6 @@ function inspectRuntimeBundle(runtimeRoot, identity) {
   for (const required of [
     paths.executable,
     paths.entrypoint,
-    path.join(runtimeRoot, "app", "browser-helper.cjs"),
     path.join(runtimeRoot, ...manifest.launcher.split("/")),
   ]) {
     const relativePath = path.relative(runtimeRoot, required).split(path.sep).join("/");

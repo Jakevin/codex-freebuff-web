@@ -3,6 +3,7 @@ import { stripUtf8Bom } from "./config";
 import {
   MANAGED_COMMENT,
   MANAGED_ROUTE_COMMENT,
+  FREEBUFF_MANAGED_ROUTE_COMMENT,
   MANAGED_MULTI_AGENT_LINE,
   MANAGED_MULTI_AGENT_V2_LINE,
   MANAGED_MULTI_AGENT_V2_TABLE_LINE,
@@ -334,18 +335,20 @@ export function removeDocumentLine(document: CodexConfigDocument, index: number)
 
 export function removeManagedComment(document: CodexConfigDocument): void {
   for (let index = document.lines.length - 1; index >= 0; index -= 1) {
-    if (document.lines[index] === MANAGED_COMMENT || document.lines[index] === MANAGED_ROUTE_COMMENT) {
+    if (document.lines[index] === MANAGED_COMMENT
+      || document.lines[index] === MANAGED_ROUTE_COMMENT
+      || document.lines[index] === FREEBUFF_MANAGED_ROUTE_COMMENT) {
       removeDocumentLine(document, index);
     }
   }
 }
 
-interface TomlTableRange {
+export interface TomlTableRange {
   headerIndex: number;
   endIndex: number;
 }
 
-function findTomlTable(lines: string[], tableName: string): TomlTableRange | undefined {
+export function findTomlTable(lines: string[], tableName: string): TomlTableRange | undefined {
   const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const header = new RegExp(`^\\s*\\[${escaped}\\]\\s*(?:#.*)?$`);
   const matches = lines
@@ -361,6 +364,54 @@ function findTomlTable(lines: string[], tableName: string): TomlTableRange | und
     headerIndex,
     endIndex: relativeEnd < 0 ? lines.length : headerIndex + 1 + relativeEnd,
   };
+}
+
+export interface TomlTableAssignment extends PreviousAssignment {
+  tablePresent: boolean;
+  tableName: string;
+}
+
+export function findTableAssignment(
+  lines: string[],
+  tableName: string,
+  key: string,
+): TomlTableAssignment {
+  const table = findTomlTable(lines, tableName);
+  if (!table) return { present: false, tablePresent: false, tableName };
+  const regex = assignmentRegex(key);
+  const matches: PreviousAssignment[] = [];
+  for (let index = table.headerIndex + 1; index < table.endIndex; index += 1) {
+    const line = lines[index]!;
+    if (/^\s*#/.test(line)) continue;
+    const match = regex.exec(line);
+    if (match) {
+      matches.push({
+        present: true,
+        rawLine: line,
+        value: decodeTomlString(match[1]!, `${key} in Codex [${tableName}]`),
+        index,
+      });
+    }
+  }
+  if (matches.length > 1) throw new Error(`Codex config contains duplicate [${tableName}].${key} assignments`);
+  return { ...(matches[0] ?? { present: false }), tablePresent: true, tableName };
+}
+
+export function appendTomlTable(document: CodexConfigDocument, tableName: string): TomlTableRange {
+  if (document.lines.length > 0 && document.lines.at(-1)?.trim()) {
+    insertDocumentLine(document, document.lines.length, "");
+  }
+  insertDocumentLine(document, document.lines.length, `[${tableName}]`);
+  return findTomlTable(document.lines, tableName)!;
+}
+
+export function removeTomlTableIfEmpty(document: CodexConfigDocument, tableName: string): void {
+  const table = findTomlTable(document.lines, tableName);
+  if (!table) return;
+  const hasContent = document.lines
+    .slice(table.headerIndex + 1, table.endIndex)
+    .some(line => line.trim().length > 0);
+  if (!hasContent) removeDocumentLine(document, table.headerIndex);
 }
 
 function insertFeatureTable(document: CodexConfigDocument): TomlTableRange {

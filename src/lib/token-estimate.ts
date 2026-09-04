@@ -1,7 +1,7 @@
 import { get_encoding, type Tiktoken } from "tiktoken";
 
 /**
- * Token accounting for ChatGPT Web prompts.
+ * Token accounting for routed coding-agent prompts.
  *
  * A character ratio is not safe here: dense JSON/base64 can contain far more tokens than prose
  * of the same length. Count with the tokenizer used by the GPT-5 generation instead.

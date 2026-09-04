@@ -3,14 +3,13 @@ import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFil
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
-import {
-  CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-  CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
-} from "./chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
+import { resolveFreebuffAuth } from "./freebuff-auth";
+import { FREEBUFF_AGENT, FREEBUFF_MODEL_ID } from "./freebuff-models";
 
 export type RuntimeMode = "browser-only" | "full";
+export type RuntimeProvider = "freebuff";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
@@ -100,6 +99,8 @@ export interface TunnelConfig {
 
 export interface AppConfig {
   version: 3;
+  /** The runtime backend. ChatGPT Web is intentionally no longer supported. */
+  provider: RuntimeProvider;
   purpose?: "dev-harness";
   releaseVersion: string;
   mode: RuntimeMode;
@@ -127,6 +128,20 @@ export interface AppConfig {
   autoApproveToolCalls: boolean;
   controlToken: string;
   runtimeCommand: string[];
+  freebuff?: {
+    /** Legacy API-key fallback. Official setup never needs this field. */
+    apiKey?: string;
+    appUrl?: string;
+    /** Optional path to the official-compatible credentials written by `codex-freebuff-web login`. */
+    credentialsPath?: string;
+    /** Optional installed official Freebuff CLI executable. */
+    cliPath?: string;
+    /** Freebuff model sent to the official session-admission endpoint. */
+    model?: string;
+    agent?: string;
+    maxAgentSteps?: number;
+    cwd?: string;
+  };
   acknowledgedUnofficialAt?: string;
   tunnel?: TunnelConfig;
   automaticTunnel?: TunnelConfig;
@@ -152,8 +167,9 @@ export function expandUserPath(value: string): string {
 }
 
 export function getConfigDir(): string {
-  const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
-  return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
+  const configured = process.env.CODEX_FREEBUFF_WEB_HOME?.trim()
+    || process.env.CODEX_CHATGPT_WEB_HOME?.trim();
+  return resolve(expandUserPath(configured || join(homedir(), ".codex-freebuff-web")));
 }
 
 export function getConfigPath(): string {
@@ -167,7 +183,7 @@ export function isWindowsPipeEndpoint(value: string): boolean {
 export function defaultBrokerEndpoint(home = getConfigDir(), platform = process.platform): string {
   if (platform !== "win32") return join(home, "runtime", "turn-broker.sock");
   const identity = createHash("sha256").update(resolve(home).toLowerCase()).digest("hex").slice(0, 20);
-  return `\\\\.\\pipe\\codex-chatgpt-web-${identity}`;
+  return `\\\\.\\pipe\\codex-freebuff-web-${identity}`;
 }
 
 export function resolveBrokerEndpoint(value: string): string {
@@ -224,6 +240,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
   const home = getConfigDir();
   return {
     version: 3,
+    provider: "freebuff",
     releaseVersion: VERSION,
     mode,
     subagentProtocol: "compatibility-v1",
@@ -246,6 +263,11 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
     runtimeCommand: currentRuntimeCommand(),
+    freebuff: {
+      model: FREEBUFF_MODEL_ID,
+      agent: FREEBUFF_AGENT,
+      maxAgentSteps: 20,
+    },
   };
 }
 
@@ -255,7 +277,7 @@ export function currentRuntimeCommand(): string[] {
     ? installedBunExecutable()
     : undefined;
   return runtimeCommandForProcess({
-    launcher: process.env.CODEX_CHATGPT_WEB_LAUNCHER,
+    launcher: process.env.CODEX_FREEBUFF_WEB_LAUNCHER ?? process.env.CODEX_CHATGPT_WEB_LAUNCHER,
     executable: process.execPath,
     entry: typeof Bun !== "undefined" ? Bun.main : process.argv[1],
     bunExecutable,
@@ -279,6 +301,7 @@ export function installedBunExecutable({
     .filter(Boolean)
     .map(part => join(part, executableName));
   const discovered = [
+    process.env.CODEX_FREEBUFF_WEB_BUN,
     process.env.CODEX_CHATGPT_WEB_BUN,
     process.env.CODEX_WEB_GPT_BUN,
     ...candidates,
@@ -367,14 +390,18 @@ export function defaultChromeExecutable(
 
 export function loadConfig(): AppConfig {
   const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
+  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-freebuff-web setup first.`);
   return parseConfig(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), path);
 }
 
 export function loadConfigForSetup(): AppConfig {
   const path = getConfigPath();
-  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-chatgpt-web setup first.`);
+  if (!existsSync(path)) throw new Error(`Configuration is missing: ${path}. Run codex-freebuff-web setup first.`);
   const raw = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
+  // Older releases did not have a provider field; intermediate forks may have written the
+  // retired adapter explicitly. Both shapes are safe to load here because setup immediately
+  // replaces their browser/tunnel authority with the Freebuff configuration below.
+  if (raw.provider === "chatgpt-web") raw.provider = "freebuff";
   if (raw.version === 1 && raw.mode === "pro-only") {
     raw.version = 2;
     raw.mode = "browser-only";
@@ -400,6 +427,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.purpose !== undefined && parsed.purpose !== "dev-harness") {
     throw new Error(`Invalid configuration purpose in ${path}`);
   }
+  const provider = parsed.provider ?? "freebuff";
+  if (provider !== "freebuff") {
+    throw new Error(`Unsupported provider in ${path}; ChatGPT Web has been removed, rerun setup to use Freebuff`);
+  }
   if (typeof parsed.releaseVersion !== "string" || !parsed.releaseVersion.trim()) throw new Error(`Missing releaseVersion in ${path}`);
   if (parsed.mode !== "browser-only" && parsed.mode !== "full") throw new Error(`Invalid runtime mode in ${path}`);
   const subagentProtocol = parsed.subagentProtocol ?? "compatibility-v1";
@@ -414,10 +445,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (browserInteractionMode !== "automatic" && browserInteractionMode !== "manual") {
     throw new Error(`Invalid browserInteractionMode in ${path}`);
   }
-  if (browserInteractionMode === "manual" && parsed.mode !== "full") {
+  if (provider !== "freebuff" && browserInteractionMode === "manual" && parsed.mode !== "full") {
     throw new Error(`Zero Risk requires full mode in ${path}`);
   }
-  if (browserInteractionMode === "manual" && parsed.browserHost !== "launcher") {
+  if (provider !== "freebuff" && browserInteractionMode === "manual" && parsed.browserHost !== "launcher") {
     throw new Error(`Zero Risk requires the launcher browser host in ${path}`);
   }
   if (!Number.isInteger(parsed.port) || parsed.port! < 1 || parsed.port! > 65_535) throw new Error(`Invalid port in ${path}`);
@@ -451,11 +482,11 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.appName !== expectedAppName) {
     throw new Error(`Active appName does not match browserInteractionMode in ${path}; rerun setup`);
   }
-  if (parsed.browserHost === "launcher"
+  if (provider !== "freebuff" && parsed.browserHost === "launcher"
     && (typeof parsed.browserHostDescriptorPath !== "string" || !parsed.browserHostDescriptorPath.trim())) {
     throw new Error(`Launcher browser host requires browserHostDescriptorPath in ${path}`);
   }
-  if (parsed.browserHost === "launcher"
+  if (provider !== "freebuff" && parsed.browserHost === "launcher"
     && !isAbsolute(expandUserPath(parsed.browserHostDescriptorPath!))) {
     throw new Error(`Launcher browserHostDescriptorPath must be absolute in ${path}`);
   }
@@ -489,7 +520,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
       }
     }
   };
-  if (parsed.mode === "full") {
+  if (provider !== "freebuff" && parsed.mode === "full") {
     validateTunnel(parsed.tunnel, "tunnel");
     if (parsed.automaticTunnel !== undefined) validateTunnel(parsed.automaticTunnel, "automaticTunnel");
     if (parsed.manualTunnel !== undefined) validateTunnel(parsed.manualTunnel, "manualTunnel");
@@ -527,11 +558,51 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
   }
+  if (parsed.freebuff !== undefined) {
+    if (!parsed.freebuff || typeof parsed.freebuff !== "object" || Array.isArray(parsed.freebuff)) {
+      throw new Error(`Invalid freebuff configuration in ${path}`);
+    }
+    if (parsed.freebuff.apiKey !== undefined
+      && (typeof parsed.freebuff.apiKey !== "string" || !parsed.freebuff.apiKey.trim())) {
+      throw new Error(`Invalid freebuff.apiKey in ${path}`);
+    }
+    if (parsed.freebuff.appUrl !== undefined
+      && (typeof parsed.freebuff.appUrl !== "string" || !parsed.freebuff.appUrl.trim())) {
+      throw new Error(`Invalid freebuff.appUrl in ${path}`);
+    }
+    if (parsed.freebuff.credentialsPath !== undefined
+      && (typeof parsed.freebuff.credentialsPath !== "string"
+        || !parsed.freebuff.credentialsPath.trim()
+        || !isAbsolute(expandUserPath(parsed.freebuff.credentialsPath)))) {
+      throw new Error(`freebuff.credentialsPath must be an absolute path in ${path}`);
+    }
+    if (parsed.freebuff.cliPath !== undefined
+      && (typeof parsed.freebuff.cliPath !== "string" || !parsed.freebuff.cliPath.trim())) {
+      throw new Error(`Invalid freebuff.cliPath in ${path}`);
+    }
+    if (parsed.freebuff.model !== undefined
+      && (typeof parsed.freebuff.model !== "string" || !parsed.freebuff.model.trim())) {
+      throw new Error(`Invalid freebuff.model in ${path}`);
+    }
+    if (parsed.freebuff.agent !== undefined
+      && (typeof parsed.freebuff.agent !== "string" || !parsed.freebuff.agent.trim())) {
+      throw new Error(`Invalid freebuff.agent in ${path}`);
+    }
+    if (parsed.freebuff.maxAgentSteps !== undefined
+      && (!Number.isSafeInteger(parsed.freebuff.maxAgentSteps)
+        || parsed.freebuff.maxAgentSteps < 1 || parsed.freebuff.maxAgentSteps > 1_000)) {
+      throw new Error(`Invalid freebuff.maxAgentSteps in ${path}`);
+    }
+    if (parsed.freebuff.cwd !== undefined
+      && (typeof parsed.freebuff.cwd !== "string" || !isAbsolute(expandUserPath(parsed.freebuff.cwd)))) {
+      throw new Error(`freebuff.cwd must be an absolute path in ${path}`);
+    }
+  }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
   const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
-  if (browserInteractionMode === "manual" && experimentalBiggerContext) {
+  if (provider !== "freebuff" && browserInteractionMode === "manual" && experimentalBiggerContext) {
     throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
   }
   if (proAvailable && !solAvailable) {
@@ -539,6 +610,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   return {
     ...parsed,
+    provider,
     appName: expectedAppName,
     automaticAppName,
     manualAppName,
@@ -558,51 +630,42 @@ export function saveConfig(config: AppConfig): void {
 }
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {
-  const manual = config.browserInteractionMode === "manual";
-  const model = manual
-    ? CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL
-    : config.solAvailable ? "gpt-5.6-sol" : "gpt-5.6-luna";
-  const models = manual
-    ? [
-      CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-      ...(config.zeroRiskProEnabled ? [CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL] : []),
-    ]
-    : [model];
-  const efforts = manual
-    ? ["low"]
-    : config.solAvailable
-    ? ["low", "medium", "high", "xhigh", ...(config.proAvailable ? ["max"] : [])]
-    : ["low", "medium"];
+  const configuredAgent = config.freebuff?.agent?.trim();
+  const agent = !configuredAgent || configuredAgent === "codebuff/base2@latest"
+    ? FREEBUFF_AGENT
+    : configuredAgent;
+  const model = config.freebuff?.model?.trim() || FREEBUFF_MODEL_ID;
+  const auth = resolveFreebuffAuth({
+    credentialsPath: config.freebuff?.credentialsPath,
+    apiKey: config.freebuff?.apiKey,
+  });
+  const appUrl = config.freebuff?.appUrl?.trim()
+    || process.env.CODEBUFF_APP_URL?.trim()
+    || "https://www.codebuff.com";
+  const models = [agent];
   return {
-    adapter: "chatgpt-web",
-    baseUrl: "https://chatgpt.com",
+    adapter: "freebuff",
+    baseUrl: appUrl,
     models,
     liveModels: false,
-    defaultModel: model,
+    defaultModel: agent,
     contextWindow: config.contextWindow,
-    modelInputModalities: Object.fromEntries(models.map(model => [model, manual ? ["text"] : ["text", "image"]])),
-    modelReasoningEfforts: Object.fromEntries(models.map(modelId => [modelId, efforts])),
-    modelDefaultReasoningEfforts: Object.fromEntries(
-      models.map(modelId => [modelId, manual ? "low" : config.solAvailable ? "high" : "low"]),
-    ),
+    modelInputModalities: Object.fromEntries(models.map(model => [model, ["text", "image"]])),
+    modelReasoningEfforts: Object.fromEntries(models.map(modelId => [modelId, ["medium"]])),
+    modelDefaultReasoningEfforts: Object.fromEntries(models.map(modelId => [modelId, "medium"])),
     noReasoningModels: [],
-    chatgptWeb: {
-      appName: manual ? config.manualAppName : config.automaticAppName,
-      browserInteractionMode: config.browserInteractionMode,
-      browserHost: config.browserHost,
-      browserHostDescriptorPath: config.browserHostDescriptorPath,
-      storageStatePath: config.storageStatePath,
-      chromeExecutablePath: config.chromeExecutablePath,
-      brokerSocketPath: config.brokerSocketPath,
-      threadEnvironmentStatePath: join(getConfigDir(), "runtime", "thread-environments.json"),
-      lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
-      headed: config.headed,
-      localToolsEnabled: config.mode === "full",
-      solAvailable: manual ? false : config.solAvailable,
-      proAvailable: manual ? false : config.proAvailable,
-      experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
+    freebuff: {
+      ...(auth.source === "legacy-api-key" && auth.token ? { apiKey: auth.token } : {}),
+      authToken: auth.token,
+      authSource: auth.source,
+      credentialsPath: auth.credentialsPath,
+      cliPath: config.freebuff?.cliPath ?? process.env.FREEBUFF_CLI_PATH,
+      model,
+      agent,
+      maxAgentSteps: config.freebuff?.maxAgentSteps ?? 20,
+      ...(config.freebuff?.cwd ? { cwd: expandUserPath(config.freebuff.cwd) } : {}),
+      sandbox: config.mode === "full" ? "workspaceWrite" : "readOnly",
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
-      autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },
   };
 }

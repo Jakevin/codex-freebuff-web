@@ -7,7 +7,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please read [Troubleshooting](https://github.com/miuuyy/codex-chatgpt-web/blob/main/TROUBLESHOOTING.md), update to the latest release, and reproduce the failure once before filing.
+        Please read [Troubleshooting](https://github.com/Jakevin/codex-freebuff-web/blob/main/TROUBLESHOOTING.md), update to the latest release, and reproduce the failure once before filing.
         Never upload cookies, browser storage, API keys, Tunnel IDs, raw launcher logs, or unredacted Codex prompts/tool output.
 
   - type: input

@@ -8,6 +8,9 @@ import { atomicWriteFile, expandUserPath, getConfigDir } from "./config";
 export const MANAGED_COMMENT = "# Managed by codex-chatgpt-web; `codex-chatgpt-web uninstall` restores prior values.";
 export const MANAGED_ROUTE_COMMENT =
   "# Managed by codex-chatgpt-web: Responses use the local bridge; Voice stays on ChatGPT.";
+export const LEGACY_MANAGED_ROUTE_COMMENT = MANAGED_ROUTE_COMMENT;
+export const FREEBUFF_MANAGED_ROUTE_COMMENT =
+  "# Managed by codex-freebuff-web: Responses use the local Freebuff bridge; voice remains native.";
 export const CODEX_REALTIME_WEBRTC_CALL_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export const MANAGED_REMOTE_COMPACTION_LINE =
   "remote_compaction_v2 = false # Managed by codex-chatgpt-web: bounds retained Web image history.";
@@ -41,17 +44,34 @@ export interface PreviousAgentAssignment extends PreviousAssignment {
   separatorInserted?: boolean;
 }
 
+export interface PreviousProviderBaseUrl {
+  provider: string;
+  tablePresent: boolean;
+  assignment: PreviousAssignment;
+}
+
 export interface CodexIntegrationJournal {
   version: 9;
   active: boolean;
   configPath: string;
   installed: {
     openai_base_url: string;
-    experimental_realtime_webrtc_call_base_url: string;
+    /** Present when Freebuff must route a non-built-in Codex provider through the local bridge. */
+    provider_base_url?: {
+      provider: string;
+      url: string;
+    };
+    /** Present when the Codex model catalog is pinned to the managed Freebuff catalog file. */
+    model_catalog_json?: string;
+    model_catalog_json_sha256?: string;
+    /** Present only in legacy v9 journals created by the ChatGPT Web transport. */
+    experimental_realtime_webrtc_call_base_url?: string;
     subagent_protocol: SubagentProtocol;
     agent_max_depth?: number;
   };
   previous: Record<ManagedAssignmentKey, PreviousAssignment>;
+  previousProviderBaseUrl?: PreviousProviderBaseUrl;
+  /** Empty for Freebuff journals; populated for legacy journals that owned a realtime route. */
   previousRealtimeWebrtcCallBaseUrl: PreviousAssignment;
   previousMultiAgent?: PreviousFeatureAssignment;
   previousMultiAgentV2?: PreviousFeatureAssignment;
@@ -222,6 +242,10 @@ export function getCodexModelsCachePath(): string {
   return join(getCodexHome(), "models_cache.json");
 }
 
+export function getCodexManagedModelCatalogPath(): string {
+  return join(getConfigDir(), "codex", "model-catalog.json");
+}
+
 export function getCodexJournalPath(): string {
   return join(getConfigDir(), "codex", "integration-journal.json");
 }
@@ -288,6 +312,7 @@ export function writeIntegrationState(
   journal: AnyCodexIntegrationJournal,
   configWrite?: { path: string; data: string },
   removals: string[] = [],
+  writes: Array<{ path: string; data: string | Uint8Array }> = [],
 ): void {
   const data = serializeJournal(journal);
   // The recovery copy records intent and the primary copy records commit. If the process stops
@@ -295,6 +320,7 @@ export function writeIntegrationState(
   writeFilesWithCompensation([
     { path: getCodexJournalRecoveryPath(), data },
     ...(configWrite ? [configWrite] : []),
+    ...writes,
     { path: getCodexJournalPath(), data },
   ], removals);
 }

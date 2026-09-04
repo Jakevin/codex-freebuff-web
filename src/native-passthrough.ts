@@ -76,12 +76,12 @@ function isBridgeCompactionItem(value: unknown): value is BridgeCompactionItem {
 }
 
 /**
- * Response item ids are scoped to the backend that created them. A ChatGPT Web response is
- * generated locally, so replaying its `rs_*` id after switching back to native Codex makes the
- * official backend try to load an item it has never stored. The same boundary applies to local
- * `ocx1:` compaction checkpoints: preserve their decoded summary as a normal input message rather
- * than asking the official backend to decrypt a bridge-owned envelope. Once either artifact proves
- * that the history crossed providers, send the complete item content without provider-local ids.
+ * Response item ids are scoped to the backend that created them. A Freebuff response is generated
+ * locally, so replaying its `rs_*` id through native Codex makes the official backend try to load
+ * an item it has never stored. The same boundary applies to local `ocx1:` compaction checkpoints:
+ * preserve their decoded summary as a normal input message rather than asking the official backend
+ * to decrypt a bridge-owned envelope. Once either artifact proves that the history crossed
+ * providers, send the complete item content without provider-local ids.
  */
 export function scrubBridgeArtifactsForNative(value: unknown): { value: unknown; changed: boolean } {
   if (!isObject(value)
@@ -96,7 +96,7 @@ export function scrubBridgeArtifactsForNative(value: unknown): { value: unknown;
     delete clean.id;
     if (isBridgeCompactionItem(clean)) {
       const summary = decodeCompactionSummary(clean.encrypted_content);
-      if (summary === null) throw new Error("Invalid ChatGPT Web compaction checkpoint");
+      if (summary === null) throw new Error("Invalid Freebuff compaction checkpoint");
       return [{
         type: "message",
         role: "user",
@@ -247,7 +247,7 @@ export async function forwardNativeCodexRequest(
     upstream.body
       ? withUncleanCloseTolerance(upstream.body, isEventStream, bytes => {
         console.warn(
-          `[codex-chatgpt-web] native_upstream_unclean_close endpoint=${endpoint} bytes=${bytes}`
+          `[codex-freebuff-web] native_upstream_unclean_close endpoint=${endpoint} bytes=${bytes}`
           + " (turn had already completed; closing the client stream normally)",
         );
       })

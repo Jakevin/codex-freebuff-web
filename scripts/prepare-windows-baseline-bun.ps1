@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Asset = "bun-windows-x64-baseline.zip"
 $ReleaseBase = "https://github.com/oven-sh/bun/releases/download/bun-v$Version"
-$Stage = Join-Path $env:RUNNER_TEMP "codex-chatgpt-web-bun-baseline-$Version"
+$Stage = Join-Path $env:RUNNER_TEMP "codex-freebuff-web-bun-baseline-$Version"
 $Archive = Join-Path $Stage $Asset
 $Checksums = Join-Path $Stage "SHASUMS256.txt"
 $Extracted = Join-Path $Stage "extracted"
@@ -31,4 +31,4 @@ if ($LASTEXITCODE -ne 0 -or $Reported -ne $Version) {
   throw "Bun baseline version mismatch: expected $Version, received $Reported"
 }
 
-Add-Content -LiteralPath $GitHubEnv -Value "CODEX_CHATGPT_WEB_EMBEDDED_BUN=$Bun" -Encoding UTF8
+Add-Content -LiteralPath $GitHubEnv -Value "CODEX_FREEBUFF_WEB_EMBEDDED_BUN=$Bun" -Encoding UTF8

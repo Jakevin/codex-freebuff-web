@@ -1,18 +1,9 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import type { AppConfig } from "./config";
-import { getConfigDir, getConfigPath, loadConfig } from "./config";
-import { join } from "node:path";
+import { getConfigPath, loadConfig } from "./config";
 import { inspectCodexIntegration } from "./codex-integration";
-import { browserLoginStateExists, loginVerificationMarkerPath } from "./browser-login";
 import { getServiceStatus } from "./service";
-import { tunnelStatus } from "./tunnel";
-import { getTunnelServiceStatus } from "./tunnel-service";
-import {
-  inspectLauncherBrowserHost,
-  inspectLauncherBrowserHostLiveness,
-  readLauncherBrowserHostDescriptor,
-} from "./launcher-browser-host";
-import { processRunning } from "./process";
+import { resolveFreebuffAuth } from "./freebuff-auth";
 
 export type CheckStatus = "ok" | "warning" | "error";
 
@@ -29,38 +20,6 @@ export interface DoctorReport {
   checks: DoctorCheck[];
 }
 
-function secureFile(path: string): boolean {
-  if (process.platform === "win32") return true;
-  return (statSync(path).mode & 0o077) === 0;
-}
-
-function launcherOwnershipError(config: AppConfig, health: Record<string, unknown>): string | undefined {
-  if (config.browserHost !== "launcher") return undefined;
-  const path = join(getConfigDir(), "runtime", "launcher-supervisor.json");
-  if (!existsSync(path)) return `Launcher runtime ownership marker is missing: ${path}`;
-  let state: Record<string, unknown>;
-  try {
-    state = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  } catch (error) {
-    return `Launcher runtime ownership marker is invalid: ${error instanceof Error ? error.message : String(error)}`;
-  }
-  if (state.version !== 1
-    || !Number.isInteger(state.ownerPid)
-    || (state.ownerPid as number) < 1
-    || !Number.isInteger(state.daemonPid)
-    || (state.daemonPid as number) < 1
-    || state.status !== "ready") {
-    return "Launcher runtime ownership marker is incomplete or not ready";
-  }
-  if (!processRunning(state.ownerPid)) {
-    return `Launcher owner process is not running (pid ${String(state.ownerPid)})`;
-  }
-  if (health.pid !== state.daemonPid) {
-    return `Responses proxy pid ${String(health.pid)} does not match launcher-owned pid ${String(state.daemonPid)}`;
-  }
-  return undefined;
-}
-
 async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2_000);
@@ -68,7 +27,7 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
     const response = await fetch(`http://${config.host}:${config.port}/healthz`, { signal: controller.signal });
     if (!response.ok) return { id: "proxy", status: "error", message: `Responses proxy returned HTTP ${response.status}` };
     const body = await response.json() as Record<string, unknown>;
-    if (body.service !== "codex-chatgpt-web" || body.status !== "ok") {
+    if (body.service !== "codex-freebuff-web" || body.status !== "ok") {
       return { id: "proxy", status: "error", message: "The configured port belongs to another service" };
     }
     if (body.mode !== config.mode) {
@@ -78,20 +37,16 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
       return { id: "proxy", status: "error", message: `Daemon version is ${String(body.version)}; config requires ${config.releaseVersion}` };
     }
     if (body.accepting_turns !== true) {
-      return {
-        id: "proxy",
-        status: "error",
-        message: "Responses proxy is still drained and is not accepting Codex turns",
-      };
-    }
-    const ownershipError = launcherOwnershipError(config, body);
-    if (ownershipError) {
-      return { id: "proxy", status: "error", message: "Responses proxy ownership could not be verified", detail: ownershipError };
+      return { id: "proxy", status: "error", message: "Responses proxy is drained and is not accepting Codex turns" };
     }
     return { id: "proxy", status: "ok", message: `Responses proxy is healthy on 127.0.0.1:${config.port}` };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { id: "proxy", status: "error", message: "Responses proxy is not reachable", detail };
+    return {
+      id: "proxy",
+      status: "error",
+      message: "Responses proxy is not reachable",
+      detail: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     clearTimeout(timeout);
   }
@@ -104,120 +59,63 @@ export async function runDoctor(): Promise<DoctorReport> {
     config = loadConfig();
     checks.push({ id: "config", status: "ok", message: `Configuration is valid (${getConfigPath()})` });
   } catch (error) {
-    checks.push({ id: "config", status: "error", message: "Configuration is invalid", detail: error instanceof Error ? error.message : String(error) });
+    checks.push({
+      id: "config",
+      status: "error",
+      message: "Configuration is invalid",
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, checks };
   }
 
-  if (config.browserHost === "launcher") {
-    try {
-      const descriptor = config.browserInteractionMode === "manual"
-        ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
-        : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
-      if (config.browserInteractionMode === "automatic") {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
-      }
-      checks.push({
-        id: "browser-host",
-        status: "ok",
-        message: config.browserInteractionMode === "manual"
-          ? `Embedded launcher browser is reachable for Zero Risk (pid ${descriptor.pid})`
-          : `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
-      });
-    } catch (error) {
-      checks.push({
-        id: "browser-host",
-        status: "error",
-        message: "Embedded launcher browser is unavailable",
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
+  const auth = resolveFreebuffAuth({
+    credentialsPath: config.freebuff?.credentialsPath,
+    apiKey: config.freebuff?.apiKey,
+  });
+  checks.push(auth.source === "official-cli"
+    ? { id: "freebuff-login", status: "ok", message: "Official-compatible Freebuff login was found" }
+    : auth.source === "legacy-api-key"
+      ? { id: "freebuff-login", status: "warning", message: "A legacy CODEBUFF_API_KEY fallback is configured; browser login is recommended" }
+      : {
+          id: "freebuff-login",
+          status: "error",
+          message: "Freebuff is not logged in; run `codex-freebuff-web login` and finish the browser login",
+          detail: `Credentials are read from ${auth.credentialsPath}`,
+        });
+
+  const cwd = config.freebuff?.cwd;
+  if (cwd && (!existsSync(cwd) || !statSync(cwd).isDirectory())) {
+    checks.push({ id: "workspace", status: "error", message: `Freebuff working directory is not a directory: ${cwd}` });
   } else {
-    if (!existsSync(config.chromeExecutablePath)) {
-      checks.push({ id: "chrome", status: "error", message: `Chrome executable is missing: ${config.chromeExecutablePath}` });
-    } else {
-      checks.push({ id: "chrome", status: "ok", message: `Chrome executable found: ${config.chromeExecutablePath}` });
-    }
-    if (!browserLoginStateExists(config)) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login state is missing or unverified; run `codex-chatgpt-web login`" });
-    } else if (!secureFile(config.storageStatePath)) {
-      checks.push({ id: "login", status: "error", message: `ChatGPT login state is readable by other users: ${config.storageStatePath}` });
-    } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {
-      checks.push({ id: "login", status: "error", message: "ChatGPT login verification marker is readable by other users" });
-    } else {
-      checks.push({ id: "login", status: "ok", message: "ChatGPT login state has authenticated browser evidence" });
-    }
+    checks.push({ id: "workspace", status: "ok", message: cwd ? `Freebuff working directory: ${cwd}` : "Freebuff uses the trusted Codex working directory" });
   }
 
   const codex = inspectCodexIntegration();
   if (!codex.installed) {
-    checks.push({ id: "codex", status: "error", message: "Codex model route is not installed" });
+    checks.push({ id: "codex", status: "error", message: "Codex Freebuff model route is not installed" });
   } else if (codex.errors.length > 0) {
     checks.push({ id: "codex", status: "error", message: "Codex integration is inconsistent", detail: codex.errors.join("; ") });
   } else {
-    checks.push({ id: "codex", status: "ok", message: "Codex native model route is installed" });
+    checks.push({ id: "codex", status: "ok", message: "Codex Freebuff model route is installed" });
   }
 
   const service = getServiceStatus();
-  if (config.browserHost === "launcher") {
-    checks.push(service.installed || service.loaded
-      ? {
-          id: "service",
-          status: "warning",
-          message: "A legacy OS background service still exists; rerun launcher setup to migrate ownership",
-          detail: JSON.stringify(service),
-        }
-      : { id: "service", status: "ok", message: "Launcher owns the background runtime" });
-  } else if (!service.supported) {
-    checks.push({ id: "service", status: "warning", message: "Managed service is unavailable on this OS; keep `serve` running manually" });
-  } else if (!service.installed || !service.loaded) {
-    checks.push({ id: "service", status: "error", message: "macOS background service is not installed and loaded" });
-  } else {
-    checks.push({ id: "service", status: "ok", message: "macOS background service is loaded" });
-  }
-  checks.push(await proxyCheck(config));
+  checks.push(!service.supported
+    ? { id: "service", status: "warning", message: "Managed service is unavailable on this OS; keep `serve` running manually" }
+    : service.loaded
+      ? { id: "service", status: "ok", message: "macOS Freebuff background service is loaded" }
+      : service.installed
+        ? { id: "service", status: "warning", message: "macOS Freebuff background service is installed but not loaded", detail: JSON.stringify(service) }
+        : { id: "service", status: "warning", message: "Freebuff background service is not installed; keep `serve` running manually" });
 
-  if (config.mode === "full") {
-    const settings = config.tunnel!;
-    if (!existsSync(settings.binaryPath)) {
-      checks.push({ id: "tunnel-binary", status: "error", message: `tunnel-client is missing: ${settings.binaryPath}` });
-    } else {
-      checks.push({ id: "tunnel-binary", status: "ok", message: "Pinned openai/tunnel-client binary is installed" });
-    }
-    if (!existsSync(settings.runtimeKeyFile)) {
-      checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file is missing" });
-    } else if (!secureFile(settings.runtimeKeyFile)) {
-      checks.push({ id: "tunnel-key", status: "error", message: "Tunnel runtime key file has unsafe permissions" });
-    } else {
-      checks.push({ id: "tunnel-key", status: "ok", message: "Tunnel runtime key is stored privately" });
-    }
-    const tunnelService = getTunnelServiceStatus();
-    if (config.browserHost === "launcher") {
-      checks.push(tunnelService.installed || tunnelService.loaded
-        ? {
-            id: "tunnel-service",
-            status: "warning",
-            message: "A legacy OS tunnel service still exists; rerun launcher MCP setup to migrate ownership",
-            detail: JSON.stringify(tunnelService),
-          }
-        : { id: "tunnel-service", status: "ok", message: "Launcher owns the tunnel runtime" });
-    } else {
-      checks.push(tunnelService.installed && tunnelService.loaded && tunnelService.running
-        ? { id: "tunnel-service", status: "ok", message: "macOS tunnel service is installed, loaded, and running" }
-        : { id: "tunnel-service", status: "error", message: "macOS tunnel service is not fully running", detail: JSON.stringify(tunnelService) });
-    }
-    const runtime = tunnelStatus(config);
-    checks.push(runtime.ok
-      ? { id: "tunnel-runtime", status: "ok", message: "Tunnel runtime reports healthy and ready" }
-      : { id: "tunnel-runtime", status: "error", message: "Tunnel runtime is not ready", detail: runtime.detail });
-    checks.push({
-      id: "connector",
-      status: "warning",
-      message: `Local checks cannot prove that ChatGPT connector ${JSON.stringify(config.appName)} is attached to this tunnel`,
-      detail: "Verify it once at https://chatgpt.com/#settings/Plugins while the tunnel is ready.",
-    });
-  } else {
-    checks.push({ id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
-  }
+  checks.push(await proxyCheck(config));
+  checks.push({
+    id: "tools",
+    status: "ok",
+    message: config.mode === "full"
+      ? "Freebuff local coding tools are enabled with workspace-write access"
+      : "Freebuff local coding tools are restricted to read-only access",
+  });
 
   return {
     ok: !checks.some(check => check.status === "error"),

@@ -2,7 +2,6 @@ import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } fr
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { defaultBrokerEndpoint } from "../src/config";
 import { VERSION } from "../src/version";
 
 const require = createRequire(import.meta.url);
@@ -15,7 +14,7 @@ const { validateRuntimeBundle } = require("../launcher/electron/runtime-install.
 
 const sourceBundle = resolve(process.argv[2] ?? "dist/runtime");
 const sourceRoot = resolve(import.meta.dir, "..");
-const root = join(homedir(), `.codex-chatgpt-web-release-smoke-${process.pid}-${Date.now()}`);
+const root = join(homedir(), `.codex-freebuff-web-release-smoke-${process.pid}-${Date.now()}`);
 const firstLocation = join(root, "first-location");
 const runtimeRoot = join(root, "relocated-runtime");
 cpSync(sourceBundle, firstLocation, { recursive: true, verbatimSymlinks: true });
@@ -29,7 +28,7 @@ validateRuntimeBundle(runtimeRoot, {
 const manifest = JSON.parse(readFileSync(join(runtimeRoot, "manifest.json"), "utf8")) as Record<string, unknown>;
 if (manifest.schemaVersion !== 2
   || manifest.appVersion !== VERSION
-  || manifest.playwright !== "1.62.0"
+  || manifest.playwright !== undefined
   || !Array.isArray(manifest.files)
   || manifest.files.length === 0
   || !/^[a-f0-9]{64}$/.test(String(manifest.bundleId ?? ""))) {
@@ -38,12 +37,33 @@ if (manifest.schemaVersion !== 2
 if (typeof manifest.launcher !== "string" || typeof manifest.entrypoint !== "string") {
   throw new Error(`Runtime manifest has no launcher or entrypoint: ${JSON.stringify(manifest)}`);
 }
+if (manifest.files.some((file) => file?.path === "app/browser-helper.cjs")) {
+  throw new Error("Freebuff runtime unexpectedly contains the retired browser helper");
+}
+const forbiddenRuntimePrefixes = [
+  "app/node_modules/playwright-core/",
+  "app/node_modules/@modelcontextprotocol/",
+  "app/node_modules/chromium-bidi/",
+  "app/node_modules/turndown/",
+  "app/node_modules/turndown-plugin-gfm/",
+];
+if (manifest.files.some((file) => forbiddenRuntimePrefixes.some(prefix => file?.path?.startsWith(prefix)))) {
+  throw new Error("Freebuff runtime unexpectedly contains a retired browser or MCP dependency");
+}
 const launcher = join(runtimeRoot, manifest.launcher);
 const runtimeExecutable = join(runtimeRoot, "runtime", process.platform === "win32" ? "bun.exe" : "bun");
 const entrypoint = join(runtimeRoot, manifest.entrypoint);
 const runtimeCommand = [runtimeExecutable, entrypoint];
 const cliBundle = readFileSync(join(runtimeRoot, "app", "cli.js"), "utf8");
 const launcherText = readFileSync(launcher, "utf8");
+if (!cliBundle.includes("@codebuff/sdk")) {
+  throw new Error("Freebuff runtime does not contain the Codebuff SDK entrypoint");
+}
+for (const forbidden of ["browser-helper", "chatgpt-web/", "CODEX_CHATGPT_WEB_BROWSER", "playwright-core"]) {
+  if (cliBundle.includes(forbidden)) {
+    throw new Error(`Freebuff runtime contains a retired ChatGPT Web marker: ${forbidden}`);
+  }
+}
 for (const forbidden of [sourceRoot, dirname(sourceBundle), "/private/tmp/codex-chatgpt-web-verify", "/tmp/codex-chatgpt-web-verify"]) {
   if (cliBundle.includes(forbidden) || launcherText.includes(forbidden)) {
     throw new Error(`Runtime artifact embeds an ephemeral build path: ${forbidden}`);
@@ -57,34 +77,51 @@ if (version.exitCode !== 0 || version.stdout.toString().trim() !== VERSION) {
 
 const appHome = join(root, "app-state");
 const codexHome = join(root, "codex");
-mkdirSync(join(appHome, "browser"), { recursive: true });
+mkdirSync(appHome, { recursive: true, mode: 0o700 });
 mkdirSync(codexHome, { recursive: true });
 const portServer = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
 const port = portServer.port;
 portServer.stop();
 const config = {
   version: 3,
+  provider: "freebuff",
   releaseVersion: VERSION,
-  mode: "browser-only",
+  mode: "full",
+  subagentProtocol: "compatibility-v1",
   host: "127.0.0.1",
   port,
   contextWindow: 256_000,
-  appName: "Codex Native",
+  appName: "Codex Native2",
+  automaticAppName: "Codex Native2",
+  manualAppName: "Codex Zero Risk",
   browserHost: "managed-chrome",
+  browserInteractionMode: "automatic",
   chromeExecutablePath: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  storageStatePath: join(appHome, "browser", "storage-state.json"),
-  brokerSocketPath: defaultBrokerEndpoint(appHome),
+  storageStatePath: join(appHome, "storage-state.json"),
+  brokerSocketPath: join(appHome, "runtime", "turn-broker.sock"),
   headed: true,
-  proAvailable: true,
+  solAvailable: true,
+  proAvailable: false,
+  experimentalBiggerContext: false,
+  zeroRiskProEnabled: false,
   autoApproveToolCalls: false,
   controlToken: "release-smoke-control-token-0123456789abcdef",
   runtimeCommand,
-  acknowledgedUnofficialAt: new Date().toISOString(),
+  freebuff: {
+    cwd: root,
+    model: "deepseek/deepseek-v4-flash",
+    agent: "base3-free-deepseek-flash",
+    maxAgentSteps: 2,
+  },
 };
 writeFileSync(join(appHome, "config.json"), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 writeFileSync(config.storageStatePath, "{}\n", { mode: 0o600 });
 
-const env = { ...process.env, CODEX_CHATGPT_WEB_HOME: appHome, CODEX_HOME: codexHome };
+const env = {
+  ...process.env,
+  CODEX_FREEBUFF_WEB_HOME: appHome,
+  CODEX_HOME: codexHome,
+};
 const child = Bun.spawn([...runtimeCommand, "serve"], { env, stdout: "pipe", stderr: "pipe" });
 let stoppedGracefully = false;
 try {
@@ -99,7 +136,7 @@ try {
   }
   if (!health?.ok) throw new Error("relocated daemon did not become healthy");
   const payload = await health.json() as Record<string, unknown>;
-  if (payload.service !== "codex-chatgpt-web" || payload.mode !== "browser-only") {
+  if (payload.service !== "codex-freebuff-web" || payload.mode !== "full") {
     throw new Error(`unexpected health payload: ${JSON.stringify(payload)}`);
   }
 
@@ -116,7 +153,7 @@ try {
   const invalid = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: "chatgpt-web/not-enabled", input: "test", stream: false }),
+    body: JSON.stringify({ model: "freebuff/not-enabled", input: "test", stream: false }),
   });
   if (invalid.status !== 400) throw new Error(`unsupported model did not fail closed: HTTP ${invalid.status}`);
 
@@ -132,13 +169,13 @@ try {
   });
   const drainPayload = await drain.json() as Record<string, unknown>;
   if (!drain.ok || drainPayload.accepting_turns !== false
-    || drainPayload.active_http_turns !== 0 || drainPayload.active_browser_turns !== 0) {
+    || drainPayload.active_http_turns !== 0 || drainPayload.active_agent_turns !== 0) {
     throw new Error(`daemon did not acknowledge an idle authenticated drain: ${JSON.stringify(drainPayload)}`);
   }
   const rejectedWhileDraining = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: "chatgpt-web/high", reasoning: { effort: "high" }, input: "test", stream: false }),
+    body: JSON.stringify({ model: "freebuff/base", reasoning: { effort: "medium" }, input: "test", stream: false }),
   });
   if (rejectedWhileDraining.status !== 503) {
     throw new Error(`daemon accepted a new turn while draining: HTTP ${rejectedWhileDraining.status}`);
@@ -152,10 +189,6 @@ try {
     throw new Error(`daemon did not resume after the drain smoke: ${JSON.stringify(resumePayload)}`);
   }
 
-  if (process.platform === "darwin") {
-    const browser = Bun.spawnSync([...runtimeCommand, "browser", "check"], { env, stdout: "pipe", stderr: "pipe" });
-    if (browser.exitCode !== 0) throw new Error(`relocated Playwright smoke failed: ${browser.stderr.toString()}`);
-  }
   const finalDrain = await fetch(`http://127.0.0.1:${port}/admin/drain`, {
     method: "POST",
     headers: { authorization: `Bearer ${config.controlToken}` },

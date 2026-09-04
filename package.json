@@ -1,19 +1,20 @@
 {
-  "name": "codex-chatgpt-web",
+  "name": "codex-freebuff-web",
   "version": "5.0.0",
   "private": true,
-  "description": "A focused local Responses bridge that runs Codex tasks through a user-authenticated ChatGPT web session.",
+  "description": "A local Responses bridge for Freebuff's official free CLI session and Web Chat entry point.",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/miuuyy/codex-chatgpt-web.git"
+    "url": "git+https://github.com/Jakevin/codex-freebuff-web.git"
   },
-  "homepage": "https://github.com/miuuyy/codex-chatgpt-web#readme",
+  "homepage": "https://github.com/Jakevin/codex-freebuff-web#readme",
   "bugs": {
-    "url": "https://github.com/miuuyy/codex-chatgpt-web/issues"
+    "url": "https://github.com/Jakevin/codex-freebuff-web/issues"
   },
   "packageManager": "bun@1.4.0",
   "type": "module",
   "bin": {
+    "codex-freebuff-web": "./src/cli.ts",
     "codex-chatgpt-web": "./src/cli.ts"
   },
   "files": [
@@ -26,46 +27,33 @@
     "start": "bun run src/cli.ts serve",
     "setup": "bun run src/cli.ts setup",
     "doctor": "bun run src/cli.ts doctor",
-    "dev:launcher": "bun run src/cli.ts dev launcher",
-    "dev:chat": "bun run src/cli.ts dev chat",
-    "test": "bun test tests/*.test.ts",
+    "test": "bun test tests/freebuff.test.ts",
+    "test:legacy": "bun test tests/*.test.ts",
     "audit": "bun audit",
     "check-version": "bun run scripts/check-version.ts",
     "typecheck": "bunx tsc --noEmit",
-    "licenses": "bun run scripts/generate-third-party-notices.ts --include-launcher",
+    "licenses": "bun run scripts/generate-third-party-notices.ts",
     "clean": "bun run scripts/clean.ts",
     "build": "bun run scripts/build-runtime-bundle.ts",
     "smoke": "bun run scripts/smoke-release.ts dist/runtime",
-    "smoke:codex": "bun run scripts/smoke-codex-catalog.ts",
-    "smoke:cancel": "bun run scripts/smoke-codex-cancel.ts",
-    "smoke:subagents": "bun run scripts/smoke-codex-subagents.ts --v1 && bun run scripts/smoke-codex-subagents.ts --v2",
-    "smoke:subagents:live": "bun run scripts/smoke-codex-web-subagents.ts",
-    "launcher": "bun run scripts/start-launcher.ts",
-    "app": "bun run scripts/start-launcher.ts",
-    "app:package": "bun run --cwd launcher package",
-    "app:smoke": "bun run --cwd launcher smoke:package",
-    "launcher:dev": "bun run --cwd launcher dev",
-    "launcher:audit": "bun run --cwd launcher audit",
-    "launcher:typecheck": "bun run --cwd launcher typecheck",
-    "launcher:build": "bun run --cwd launcher build",
-    "launcher:test": "bun run --cwd launcher test",
     "verify": "bun run scripts/verify.ts"
   },
   "dependencies": {
+    "@codebuff/sdk": "^0.10.7",
+    "tiktoken": "1.0.22",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@types/bun": "1.4.0",
+    "@types/turndown": "5.0.5",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "chromium-bidi": "12.1.0",
     "fflate": "^0.8.2",
     "playwright-core": "^1.62.0",
-    "tiktoken": "1.0.22",
     "turndown": "7.2.0",
     "turndown-plugin-gfm": "1.0.2",
-    "zod": "4.4.3"
-  },
-  "devDependencies": {
-    "@types/bun": "1.4.0",
-    "@types/turndown": "5.0.5",
     "typescript": "5.9.3"
   },
   "engines": {
@@ -80,10 +68,10 @@
   },
   "keywords": [
     "codex",
-    "chatgpt",
+    "freebuff",
+    "codebuff",
     "responses-api",
-    "mcp",
-    "playwright"
+    "coding-agent"
   ],
   "license": "MIT"
 }

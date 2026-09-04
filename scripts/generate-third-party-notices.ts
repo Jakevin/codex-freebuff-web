@@ -16,6 +16,8 @@ const includeLauncher = argumentsList.includes("--include-launcher");
 const destinationArgument = argumentsList.find(argument => argument !== "--include-launcher");
 const visited = new Map<string, { directory: string; manifest: PackageJson }>();
 const bundledLicenseOverrides = new Map([
+  ["@codebuff/sdk@0.10.7", join(root, "LICENSES", "codebuff-sdk-Apache-2.0.md")],
+  ["ignore@7.0.5", join(root, "LICENSES", "ignore-ISC.md")],
   ["tiktoken@1.0.22", join(root, "LICENSES", "tiktoken-MIT.txt")],
 ]);
 
@@ -83,7 +85,7 @@ const libnotifyLicense = readFileSync(
   "utf8",
 ).trim();
 const output = [
-  "codex-chatgpt-web third-party notices",
+  "codex-freebuff-web third-party notices",
   "",
   "This file covers runtime JavaScript packages bundled into the standalone executable.",
   "The executable also embeds Bun 1.4.0; Bun's licensing and relinking notice follows first.",

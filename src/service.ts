@@ -5,7 +5,7 @@ import type { AppConfig } from "./config";
 import { assertDurableRuntimeCommand, atomicWriteFile, getConfigDir } from "./config";
 import { runCommand, runChecked } from "./process";
 
-const LABEL = "io.github.codex-chatgpt-web.daemon";
+const LABEL = "io.github.codex-freebuff-web.daemon";
 
 export interface ServiceStatus {
   supported: boolean;
@@ -71,7 +71,7 @@ ${args.map(arg => `    <string>${xml(arg)}</string>`).join("\n")}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>CODEX_CHATGPT_WEB_HOME</key>
+    <key>CODEX_FREEBUFF_WEB_HOME</key>
     <string>${xml(getConfigDir())}</string>
   </dict>
   <key>RunAtLoad</key>
@@ -95,7 +95,7 @@ function assertMacOs(): void {
   if (process.platform !== "darwin") {
     throw new Error(
       "Terminal-managed background services require macOS. "
-      + "Use the Codex Web GPT launcher on Windows or Linux.",
+      + "Run `codex-freebuff-web serve` manually on Windows or Linux.",
     );
   }
 }
@@ -157,19 +157,19 @@ async function control(config: AppConfig, action: "drain" | "resume" | "cancel-t
 
 export async function cancelActiveTurns(config: AppConfig): Promise<{
   cancelledHttpTurns: number;
-  cancelledBrowserTurns: number;
+  cancelledAgentTurns: number;
 }> {
   const result = await control(config, "cancel-turns");
   const cancelledHttpTurns = result.cancelled_http_turns;
-  const cancelledBrowserTurns = result.cancelled_browser_turns;
+  const cancelledAgentTurns = result.cancelled_agent_turns;
   if (!Number.isInteger(cancelledHttpTurns) || (cancelledHttpTurns as number) < 0
-    || !Number.isInteger(cancelledBrowserTurns) || (cancelledBrowserTurns as number) < 0
-    || result.active_http_turns !== 0 || result.active_browser_turns !== 0) {
+    || !Number.isInteger(cancelledAgentTurns) || (cancelledAgentTurns as number) < 0
+    || result.active_http_turns !== 0 || result.active_agent_turns !== 0) {
     throw new Error("daemon did not acknowledge complete active-turn cancellation");
   }
   return {
     cancelledHttpTurns: cancelledHttpTurns as number,
-    cancelledBrowserTurns: cancelledBrowserTurns as number,
+    cancelledAgentTurns: cancelledAgentTurns as number,
   };
 }
 
@@ -183,12 +183,12 @@ export async function negotiateDrain(
     const health = await controlAction("drain");
     drained = true;
     const activeHttp = health.active_http_turns;
-    const activeBrowser = health.active_browser_turns;
-    if (!Number.isInteger(activeHttp) || !Number.isInteger(activeBrowser) || health.accepting_turns !== false) {
+    const activeAgent = health.active_agent_turns;
+    if (!Number.isInteger(activeHttp) || !Number.isInteger(activeAgent) || health.accepting_turns !== false) {
       throw new Error("daemon did not acknowledge the drain contract");
     }
-    if ((activeHttp as number) > 0 || (activeBrowser as number) > 0) {
-      throw new Error(`daemon has ${activeHttp} active HTTP turn(s) and ${activeBrowser} active browser turn(s)`);
+    if ((activeHttp as number) > 0 || (activeAgent as number) > 0) {
+      throw new Error(`daemon has ${activeHttp} active HTTP turn(s) and ${activeAgent} active Freebuff run(s)`);
     }
     return { release: async () => { if (drained) { await controlAction("resume"); drained = false; } } };
   } catch (error) {

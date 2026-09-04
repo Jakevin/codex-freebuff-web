@@ -101,8 +101,8 @@ export function isOnePixelPngDataUrl(value: unknown): value is string {
  *
  * Keeping the original item metadata matters: Codex uses it after `/responses/compact` to
  * distinguish real user turns from contextual user-role wrappers. Images remain structured
- * `input_image` blocks so the browser adapter can upload them as attachments; their data URL is
- * never copied into the textual ChatGPT transport envelope.
+ * `input_image` blocks so the Freebuff adapter can pass them as native image content; their data
+ * URL is never copied into the textual prompt envelope.
  */
 export function extractCompactUserMessages(input: unknown): CompactMessageItem[] {
   if (!Array.isArray(input)) return [];
@@ -148,9 +148,9 @@ function imageBlock(block: CompactContentBlock): boolean {
  * Build the v1 compact replacement history.
  *
  * Text follows Codex's 20k-token retained-user-message budget. Image history is independently
- * bounded to ChatGPT's ten-attachment limit, newest first. This prevents an old image corpus from
+ * bounded to the adapter's ten-attachment limit, newest first. This prevents an old image corpus from
  * immediately refilling Codex's context window after a successful compact while still preserving
- * the visual context the browser model can actually receive.
+ * the visual context the Freebuff model can actually receive.
  */
 export function buildCompactV1Output(
   userMessages: CompactMessageItem[],

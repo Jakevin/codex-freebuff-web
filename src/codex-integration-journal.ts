@@ -30,6 +30,15 @@ function isPreviousAssignment(value: unknown): boolean {
     || (typeof assignment.rawLine === "string" && typeof assignment.value === "string");
 }
 
+function isPreviousProviderBaseUrl(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const provider = value as Record<string, unknown>;
+  return typeof provider.provider === "string"
+    && provider.provider.length > 0
+    && typeof provider.tablePresent === "boolean"
+    && isPreviousAssignment(provider.assignment);
+}
+
 function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   const installed = value.installed as Record<string, unknown> | undefined;
@@ -37,7 +46,17 @@ function parseJournal(path: string): AnyCodexIntegrationJournal {
     && typeof value.active === "boolean"
     && installed
     && typeof installed.openai_base_url === "string"
-    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
+    && (installed.provider_base_url === undefined
+      || (installed.provider_base_url
+        && typeof installed.provider_base_url === "object"
+        && typeof (installed.provider_base_url as Record<string, unknown>).provider === "string"
+        && typeof (installed.provider_base_url as Record<string, unknown>).url === "string"))
+    && (installed.model_catalog_json === undefined || typeof installed.model_catalog_json === "string")
+    && (installed.model_catalog_json_sha256 === undefined
+      || (typeof installed.model_catalog_json_sha256 === "string"
+        && /^[a-f0-9]{64}$/.test(installed.model_catalog_json_sha256)))
+    && (installed.experimental_realtime_webrtc_call_base_url === undefined
+      || installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL)
     && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
     && (installed.subagent_protocol !== "compatibility-v1"
       || (value.previousMultiAgent && value.previousMultiAgentV2
@@ -46,7 +65,11 @@ function parseJournal(path: string): AnyCodexIntegrationJournal {
         && Number.isSafeInteger(installed.agent_max_depth)
         && installed.agent_max_depth >= 2))
     && value.previous
-    && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
+    && (value.previousProviderBaseUrl === undefined || isPreviousProviderBaseUrl(value.previousProviderBaseUrl))
+    && (installed.provider_base_url === undefined || isPreviousProviderBaseUrl(value.previousProviderBaseUrl))
+    && (installed.model_catalog_json === undefined || typeof installed.model_catalog_json_sha256 === "string")
+    && (value.previousRealtimeWebrtcCallBaseUrl === undefined
+      || isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl))
     && typeof value.configPath === "string") {
     return value as unknown as CodexIntegrationJournal;
   }

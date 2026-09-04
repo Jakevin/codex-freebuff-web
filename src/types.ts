@@ -16,8 +16,8 @@ export interface CodexParsedRequest {
   _compactionRequest?: boolean;
   /**
    * True when Codex MultiAgent V2 delegated an agent_message as provider-private encrypted_content.
-   * ChatGPT Web has no OpenAI backend key for that blob; the Responses HTTP boundary rejects it
-   * before constructing the browser adapter.
+   * Freebuff cannot read that provider-private blob; the Responses HTTP boundary rejects it before
+   * constructing a local agent run.
    */
   _opaqueMultiAgentV2Payload?: boolean;
 }
@@ -246,9 +246,10 @@ export interface CodexUsage {
   estimated?: boolean;
 }
 
-/** The only provider configuration supported by this focused runtime. */
+/** Provider configuration for the local Responses bridge. */
 export interface CodexProviderConfig {
-  adapter: "chatgpt-web";
+  /** `chatgpt-web` remains a type-level compatibility value for old test fixtures only. */
+  adapter: "freebuff" | "chatgpt-web";
   baseUrl: string;
   defaultModel?: string;
   models?: string[];
@@ -259,6 +260,32 @@ export interface CodexProviderConfig {
   modelReasoningEfforts?: Record<string, string[]>;
   modelDefaultReasoningEfforts?: Record<string, string>;
   noReasoningModels?: string[];
+  freebuff?: {
+    /** Legacy Codebuff API-key fallback. Official CLI auth is exposed as authToken below. */
+    apiKey?: string;
+    /** Bearer token saved by the official-compatible browser login. Never persisted by this bridge. */
+    authToken?: string;
+    /** Where authToken came from, for diagnostics and tests; never includes the token itself. */
+    authSource?: "official-cli" | "legacy-api-key" | null;
+    /** Official-compatible credentials path used for the last auth resolution. */
+    credentialsPath?: string;
+    /** Optional installed official Freebuff CLI executable. */
+    cliPath?: string;
+    /** Freebuff model sent to the official session-admission endpoint. */
+    model?: string;
+    /** Published Freebuff agent id, for example base3-free-deepseek-flash. */
+    agent?: string;
+    /** Safety ceiling for one Codebuff run. */
+    maxAgentSteps?: number;
+    /** Optional explicit working directory for non-Codex callers and tests. */
+    cwd?: string;
+    /** Filesystem policy used when no trusted Codex environment is present. */
+    sandbox?: "readOnly" | "workspaceWrite" | "dangerFullAccess";
+    /** Responses watchdog threshold for the Codebuff upstream. */
+    stallTimeoutSec?: number;
+    /** Request-scoped cancellation key, assigned by the Responses bridge. */
+    traceId?: string;
+  };
   chatgptWeb?: {
     /** ChatGPT custom connector attached to tool-capable temporary chats. */
     appName?: string;

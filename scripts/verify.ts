@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
-const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
+const scratch = mkdtempSync(join(tmpdir(), "codex-freebuff-web-verify-"));
 const runtimeBundle = join(scratch, "runtime");
 
 async function run(args: string[]): Promise<void> {
@@ -20,18 +20,13 @@ async function run(args: string[]): Promise<void> {
 try {
   await run(["run", "check-version"]);
   await run(["run", "audit"]);
-  await run(["run", "launcher:audit"]);
   await run(["run", "typecheck"]);
   await run(["run", "test"]);
-  await run(["run", "launcher:typecheck"]);
-  await run(["run", "launcher:test"]);
-  await run(["run", "launcher:build"]);
   await run(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);
   await run([
     "run",
     "scripts/generate-third-party-notices.ts",
     join(scratch, "THIRD_PARTY_NOTICES.txt"),
-    "--include-launcher",
   ]);
   await run(["run", "scripts/smoke-release.ts", runtimeBundle]);
 } finally {

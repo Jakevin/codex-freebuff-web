@@ -15,7 +15,7 @@ import {
 } from "../chatgpt-web-models";
 import type { AppConfig } from "../config";
 import { parseRequest } from "../responses/parser";
-import { compactRequest, responseRequest, routeChatGptWebRequest } from "../server";
+import { compactRequest, responseRequest } from "../server";
 import { namespacedToolName, type AdapterEvent, type CodexProviderConfig } from "../types";
 import {
   createDevCoherentContextPayload,
@@ -25,6 +25,7 @@ import {
   type DevChatStore,
   type DevChatUsage,
 } from "./session";
+import { routeChatGptWebRequest } from "./legacy-route";
 
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 

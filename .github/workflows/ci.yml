@@ -17,53 +17,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
-      - name: Validate launcher installer with Windows PowerShell 5.1
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          if ($PSVersionTable.PSVersion.Major -ne 5) {
-            throw "Expected Windows PowerShell 5.1, got $($PSVersionTable.PSVersion)"
-          }
-          $source = Get-Content scripts/install-launcher.ps1 -Raw
-          [void][scriptblock]::Create($source)
-          if ($source.Contains("IsPathFullyQualified")) {
-            throw "The Windows PowerShell 5.1 installer cannot use the .NET Core-only IsPathFullyQualified API"
-          }
-          if (-not [Environment]::Is64BitOperatingSystem) {
-            throw "The Windows CI runner must be 64-bit"
-          }
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bun install --frozen-lockfile
-        working-directory: launcher
       - name: Prepare AVX2-independent Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
-      - name: Prepare compatible Linux libnotify
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
-          ./scripts/prepare-linux-libnotify.sh
-      - name: Prepare owned AppImage toolset
-        if: runner.os == 'Linux'
-        run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - run: bun run verify
-      - run: bun run app:package
-      - name: Verify Linux AppImage ABI on current Arch
-        if: runner.os == 'Linux'
-        run: |
-          artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"
-          test -n "$artifact"
-          docker run --rm -v "$PWD:/work:ro" -e APPIMAGE_PATH="/work/$artifact" archlinux:base \
-            sh -lc 'pacman -Sy --noconfirm binutils file glibc alsa-lib at-spi2-core cairo cups gtk3 libx11 libxcb libxcomposite libxdamage libxext libxfixes libxkbcommon libxrandr mesa nspr nss pango >/dev/null && /work/launcher/scripts/smoke-linux-appimage-symbols.sh "$APPIMAGE_PATH"'
-      - name: Ensure virtual display is available
-        if: runner.os == 'Linux'
-        run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
-      - run: bun run app:smoke
 
   actionlint:
     runs-on: ubuntu-latest

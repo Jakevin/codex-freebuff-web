@@ -1,12 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppConfig } from "./config";
-import { atomicWriteFile, getConfigPath, saveConfig } from "./config";
+import { atomicWriteFile, defaultConfig, getConfigPath, loadConfig, saveConfig } from "./config";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   getCodexConfigPath,
   getCodexJournalPath,
   getCodexJournalRecoveryPath,
+  getCodexManagedModelCatalogPath,
   getCodexModelsCachePath,
   restoreFileSnapshot,
   routeUrl,
@@ -26,16 +27,24 @@ import type {
   SetCodexIntegrationActiveResult,
   UninstallCodexIntegrationResult,
 } from "./codex-integration-shared";
+import { augmentNativeModelCatalog } from "./model-catalog";
 import { assertJournalTargetsConfig, readJournal } from "./codex-integration-journal";
 import {
   findTopLevelAssignment,
+  firstTableIndex,
   installCompatibilityV1Features,
+  insertDocumentLine,
+  parseDocument,
+  readCodexModelContextOverride,
+  renderDocument,
   splitLines,
   textFormat,
 } from "./codex-integration-document";
 import {
   assertPreservedPreviousAssignments,
+  assertPreservedPreviousProviderBaseUrl,
   assertPreservedPreviousRealtimeAssignment,
+  installProviderBaseUrl,
   installRoute,
   managedJournalIsActive,
   replacementBaseline,
@@ -46,10 +55,101 @@ import {
   verifyRestoredRoute,
 } from "./codex-integration-route";
 
+const FALLBACK_NATIVE_CODEX_CATALOG = {
+  models: [{
+    slug: "gpt-5.6-sol",
+    display_name: "GPT-5.6-Sol",
+    description: "Latest frontier agentic coding model.",
+    default_reasoning_level: "low",
+    supported_reasoning_levels: [
+      { effort: "low", description: "Fast responses with lighter reasoning" },
+      { effort: "medium", description: "Balances speed and reasoning depth for everyday tasks" },
+      { effort: "high", description: "Greater reasoning depth for complex tasks" },
+      { effort: "xhigh", description: "Extra high reasoning depth for complex tasks" },
+      { effort: "max", description: "Maximum reasoning depth for the hardest tasks" },
+      { effort: "ultra", description: "Maximum reasoning with automatic task delegation" },
+    ],
+    visibility: "list",
+    supported_in_api: true,
+    tool_mode: "code_mode_only",
+    priority: 1,
+  }],
+};
+
+function nativeCatalogForManagedRoute(): unknown {
+  for (const sourcePath of [getCodexModelsCachePath(), getCodexManagedModelCatalogPath()]) {
+    if (!existsSync(sourcePath)) continue;
+    try {
+      return JSON.parse(readFileSync(sourcePath, "utf8"));
+    } catch (error) {
+      throw new Error(
+        `Codex model catalog is not valid JSON: ${sourcePath}; ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return FALLBACK_NATIVE_CODEX_CATALOG;
+}
+
+function buildManagedModelCatalog(config: Pick<AppConfig, "mode" | "subagentProtocol" | "contextWindow">): {
+  path: string;
+  data: string;
+  sha256: string;
+} {
+  const catalog = augmentNativeModelCatalog(
+    nativeCatalogForManagedRoute(),
+    config,
+    readCodexModelContextOverride(),
+  );
+  const data = `${JSON.stringify(catalog)}\n`;
+  return {
+    path: getCodexManagedModelCatalogPath(),
+    data,
+    sha256: sha256(data),
+  };
+}
+
+function installManagedModelCatalogRoute(
+  text: string,
+  catalogPath: string,
+  replaceExistingRoute: boolean,
+): string {
+  const document = parseDocument(text);
+  const current = findTopLevelAssignment(document.lines, "model_catalog_json");
+  if (current.present && current.value !== catalogPath && !replaceExistingRoute) {
+    throw new Error(
+      `Codex already configures model_catalog_json=${JSON.stringify(current.value)}. `
+      + "Rerun with --replace-codex-route to replace it reversibly.",
+    );
+  }
+  const installedLine = `model_catalog_json = ${JSON.stringify(catalogPath)}`;
+  if (current.index !== undefined) document.lines[current.index] = installedLine;
+  else insertDocumentLine(document, firstTableIndex(document.lines), installedLine);
+  return renderDocument(document);
+}
+
+function assertManagedCatalogUnchanged(journal: AnyCodexIntegrationJournal | undefined): void {
+  if (journal?.version !== 9 || journal.installed.model_catalog_json === undefined) return;
+  const path = journal.installed.model_catalog_json;
+  if (!existsSync(path) || journal.installed.model_catalog_json_sha256 === undefined) return;
+  if (sha256(readFileSync(path)) !== journal.installed.model_catalog_json_sha256) {
+    throw new Error(`Managed Codex model catalog changed after setup: ${path}`);
+  }
+}
+
+function managedCatalogRemovals(
+  existing: AnyCodexIntegrationJournal | undefined,
+  nextCatalogPath: string | undefined,
+): string[] {
+  assertManagedCatalogUnchanged(existing);
+  if (existing?.version !== 9 || existing.installed.model_catalog_json === undefined) return [];
+  const path = existing.installed.model_catalog_json;
+  return path === nextCatalogPath ? [] : [path];
+}
+
 function installConfiguredRoute(
   baseline: string,
   installedUrl: string,
-  config: Pick<AppConfig, "subagentProtocol">,
+  config: Pick<AppConfig, "mode" | "subagentProtocol" | "contextWindow"> & { provider?: AppConfig["provider"] },
   replaceExistingRoute: boolean,
   replaceExistingRealtimeRoute: boolean,
 ): {
@@ -60,15 +160,49 @@ function installConfiguredRoute(
   previousMultiAgentV2?: CodexIntegrationJournal["previousMultiAgentV2"];
   previousAgentMaxDepth?: CodexIntegrationJournal["previousAgentMaxDepth"];
   installedAgentMaxDepth?: number;
+  previousProviderBaseUrl?: CodexIntegrationJournal["previousProviderBaseUrl"];
+  installedProviderBaseUrl?: CodexIntegrationJournal["installed"]["provider_base_url"];
+  modelCatalog?: {
+    path: string;
+    data: string;
+    sha256: string;
+  };
 } {
   const route = installRoute(
     baseline,
     installedUrl,
     replaceExistingRoute,
     replaceExistingRealtimeRoute,
+    config.provider !== "freebuff",
   );
-  if (config.subagentProtocol !== "compatibility-v1") return route;
-  const features = installCompatibilityV1Features(route.text);
+  let text = route.text;
+  let previousProviderBaseUrl: CodexIntegrationJournal["previousProviderBaseUrl"];
+  let installedProviderBaseUrl: CodexIntegrationJournal["installed"]["provider_base_url"];
+  let modelCatalog: {
+    path: string;
+    data: string;
+    sha256: string;
+  } | undefined;
+  const provider = route.previous.model_provider.value;
+  if (config.provider === "freebuff" && provider && provider !== "openai") {
+    const providerRoute = installProviderBaseUrl(text, installedUrl, replaceExistingRoute);
+    text = providerRoute.text;
+    previousProviderBaseUrl = providerRoute.previous;
+    installedProviderBaseUrl = providerRoute.installed;
+    modelCatalog = buildManagedModelCatalog(config);
+    text = installManagedModelCatalogRoute(text, modelCatalog.path, replaceExistingRoute);
+  }
+  if (config.subagentProtocol !== "compatibility-v1") {
+    return {
+      text,
+      previous: route.previous,
+      previousRealtimeWebrtcCallBaseUrl: route.previousRealtimeWebrtcCallBaseUrl,
+      ...(previousProviderBaseUrl ? { previousProviderBaseUrl } : {}),
+      ...(installedProviderBaseUrl ? { installedProviderBaseUrl } : {}),
+      ...(modelCatalog ? { modelCatalog } : {}),
+    };
+  }
+  const features = installCompatibilityV1Features(text);
   return {
     text: features.text,
     previous: route.previous,
@@ -77,6 +211,9 @@ function installConfiguredRoute(
     previousMultiAgentV2: features.previousMultiAgentV2,
     previousAgentMaxDepth: features.previousAgentMaxDepth,
     installedAgentMaxDepth: features.installedAgentMaxDepth,
+    ...(previousProviderBaseUrl ? { previousProviderBaseUrl } : {}),
+    ...(installedProviderBaseUrl ? { installedProviderBaseUrl } : {}),
+    ...(modelCatalog ? { modelCatalog } : {}),
   };
 }
 
@@ -89,6 +226,7 @@ export {
   getCodexHome,
   getCodexJournalPath,
   getCodexJournalRecoveryPath,
+  getCodexManagedModelCatalogPath,
   getCodexModelsCachePath,
 } from "./codex-integration-shared";
 export { readCodexModelContextOverride } from "./codex-integration-document";
@@ -124,6 +262,7 @@ export function setCodexSubagentProtocol(
     getConfigPath(),
     getCodexConfigPath(),
     getCodexModelsCachePath(),
+    getCodexManagedModelCatalogPath(),
     getCodexJournalPath(),
     getCodexJournalRecoveryPath(),
   ].map(snapshotFile);
@@ -247,7 +386,16 @@ export function installCodexIntegration(
     );
     if (preservePrevious) {
       assertPreservedPreviousAssignments(patched.previous, existing.previous);
-      if (existing.version === 9) {
+      const preservesProviderBaseUrl = existing.version === 9
+        && existing.installed.provider_base_url?.provider === patched.installedProviderBaseUrl?.provider;
+      assertPreservedPreviousProviderBaseUrl(
+        patched.previousProviderBaseUrl,
+        preservesProviderBaseUrl ? existing.previousProviderBaseUrl : undefined,
+      );
+      if (config.provider !== "freebuff"
+        && existing.version === 9
+        && existing.previousRealtimeWebrtcCallBaseUrl !== undefined
+        && patched.previousRealtimeWebrtcCallBaseUrl !== undefined) {
         assertPreservedPreviousRealtimeAssignment(
           patched.previousRealtimeWebrtcCallBaseUrl,
           existing.previousRealtimeWebrtcCallBaseUrl,
@@ -260,16 +408,35 @@ export function installCodexIntegration(
       configPath,
       installed: {
         openai_base_url: installedUrl,
-        experimental_realtime_webrtc_call_base_url: CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
+        ...(config.provider !== "freebuff" ? {
+          experimental_realtime_webrtc_call_base_url: CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
+        } : {}),
         subagent_protocol: config.subagentProtocol,
         ...(config.subagentProtocol === "compatibility-v1" ? {
           agent_max_depth: patched.installedAgentMaxDepth,
         } : {}),
+        ...(patched.installedProviderBaseUrl ? {
+          provider_base_url: patched.installedProviderBaseUrl,
+        } : {}),
+        ...(patched.modelCatalog ? {
+          model_catalog_json: patched.modelCatalog.path,
+          model_catalog_json_sha256: patched.modelCatalog.sha256,
+        } : {}),
       },
       previous: preservePrevious ? existing.previous : patched.previous,
-      previousRealtimeWebrtcCallBaseUrl: preservePrevious && existing.version === 9
-        ? existing.previousRealtimeWebrtcCallBaseUrl
-        : patched.previousRealtimeWebrtcCallBaseUrl,
+      ...(patched.previousProviderBaseUrl ? {
+        previousProviderBaseUrl: preservePrevious
+          && existing.version === 9
+          && existing.installed.provider_base_url?.provider === patched.installedProviderBaseUrl?.provider
+          && existing.previousProviderBaseUrl
+          ? existing.previousProviderBaseUrl
+          : patched.previousProviderBaseUrl,
+      } : {}),
+      previousRealtimeWebrtcCallBaseUrl: config.provider === "freebuff"
+        ? { present: false }
+        : preservePrevious && existing.version === 9
+          ? existing.previousRealtimeWebrtcCallBaseUrl ?? patched.previousRealtimeWebrtcCallBaseUrl
+          : patched.previousRealtimeWebrtcCallBaseUrl,
       ...(config.subagentProtocol === "compatibility-v1" ? {
         previousMultiAgent: patched.previousMultiAgent,
         previousMultiAgentV2: patched.previousMultiAgentV2,
@@ -277,7 +444,12 @@ export function installCodexIntegration(
       } : {}),
       ...(existing.format ? { format: existing.format } : {}),
     };
-    writeIntegrationState(updated, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
+    writeIntegrationState(
+      updated,
+      { path: configPath, data: patched.text },
+      [getCodexModelsCachePath(), ...managedCatalogRemovals(existing, patched.modelCatalog?.path)],
+      patched.modelCatalog ? [{ path: patched.modelCatalog.path, data: patched.modelCatalog.data }] : [],
+    );
     return updated;
   }
 
@@ -301,14 +473,28 @@ export function installCodexIntegration(
     configPath,
     installed: {
       openai_base_url: installedUrl,
-      experimental_realtime_webrtc_call_base_url: CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
+      ...(config.provider !== "freebuff" ? {
+        experimental_realtime_webrtc_call_base_url: CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
+      } : {}),
       subagent_protocol: config.subagentProtocol,
       ...(config.subagentProtocol === "compatibility-v1" ? {
         agent_max_depth: patched.installedAgentMaxDepth,
       } : {}),
+      ...(patched.installedProviderBaseUrl ? {
+        provider_base_url: patched.installedProviderBaseUrl,
+      } : {}),
+      ...(patched.modelCatalog ? {
+        model_catalog_json: patched.modelCatalog.path,
+        model_catalog_json_sha256: patched.modelCatalog.sha256,
+      } : {}),
     },
     previous: patched.previous,
-    previousRealtimeWebrtcCallBaseUrl: patched.previousRealtimeWebrtcCallBaseUrl,
+    ...(patched.previousProviderBaseUrl ? {
+      previousProviderBaseUrl: patched.previousProviderBaseUrl,
+    } : {}),
+    previousRealtimeWebrtcCallBaseUrl: config.provider === "freebuff"
+      ? { present: false }
+      : patched.previousRealtimeWebrtcCallBaseUrl,
     ...(config.subagentProtocol === "compatibility-v1" ? {
       previousMultiAgent: patched.previousMultiAgent,
       previousMultiAgentV2: patched.previousMultiAgentV2,
@@ -316,7 +502,12 @@ export function installCodexIntegration(
     } : {}),
     format: textFormat(baseline),
   };
-  writeIntegrationState(journal, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
+  writeIntegrationState(
+    journal,
+    { path: configPath, data: patched.text },
+    [getCodexModelsCachePath()],
+    patched.modelCatalog ? [{ path: patched.modelCatalog.path, data: patched.modelCatalog.data }] : [],
+  );
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;
 }
@@ -371,36 +562,42 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     baseline = restoreManagedRoute(current, existing);
   }
   const protocol = journalProtocol(existing);
+  const configured = existsSync(getConfigPath()) ? loadConfig() : defaultConfig("browser-only");
   const route = installConfiguredRoute(
     baseline,
     existing.installed.openai_base_url,
-    { subagentProtocol: protocol },
+    { ...configured, subagentProtocol: protocol, provider: "freebuff" },
     true,
     existing.version === 9,
   );
   assertPreservedPreviousAssignments(route.previous, existing.previous);
-  if (existing.version === 9) {
-    assertPreservedPreviousRealtimeAssignment(
-      route.previousRealtimeWebrtcCallBaseUrl,
-      existing.previousRealtimeWebrtcCallBaseUrl,
-    );
-  }
+  assertPreservedPreviousProviderBaseUrl(
+    route.previousProviderBaseUrl,
+    existing.version === 9 ? existing.previousProviderBaseUrl : undefined,
+  );
   const connected: CodexIntegrationJournal = {
     version: 9,
     active: true,
     configPath: existing.configPath,
     installed: {
       openai_base_url: existing.installed.openai_base_url,
-      experimental_realtime_webrtc_call_base_url: CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
       subagent_protocol: protocol,
       ...(protocol === "compatibility-v1" ? {
         agent_max_depth: route.installedAgentMaxDepth,
       } : {}),
+      ...(route.installedProviderBaseUrl ? {
+        provider_base_url: route.installedProviderBaseUrl,
+      } : {}),
+      ...(route.modelCatalog ? {
+        model_catalog_json: route.modelCatalog.path,
+        model_catalog_json_sha256: route.modelCatalog.sha256,
+      } : {}),
     },
     previous: existing.previous,
-    previousRealtimeWebrtcCallBaseUrl: existing.version === 9
-      ? existing.previousRealtimeWebrtcCallBaseUrl
-      : route.previousRealtimeWebrtcCallBaseUrl,
+    ...(route.previousProviderBaseUrl ? {
+      previousProviderBaseUrl: route.previousProviderBaseUrl,
+    } : {}),
+    previousRealtimeWebrtcCallBaseUrl: { present: false },
     ...(protocol === "compatibility-v1" ? {
       previousMultiAgent: route.previousMultiAgent,
       previousMultiAgentV2: route.previousMultiAgentV2,
@@ -408,7 +605,12 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     } : {}),
     ...(existing.format ? { format: existing.format } : {}),
   };
-  writeIntegrationState(connected, { path: existing.configPath, data: route.text }, [getCodexModelsCachePath()]);
+  writeIntegrationState(
+    connected,
+    { path: existing.configPath, data: route.text },
+    [getCodexModelsCachePath(), ...managedCatalogRemovals(existing, route.modelCatalog?.path)],
+    route.modelCatalog ? [{ path: route.modelCatalog.path, data: route.modelCatalog.data }] : [],
+  );
   return { changed: true, active: true };
 }
 
@@ -416,6 +618,7 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const journal = readJournal();
   if (!journal) return { changed: false };
   if (!existsSync(journal.configPath)) throw new Error(`Codex config is missing: ${journal.configPath}`);
+  assertManagedCatalogUnchanged(journal);
   const current = readFileSync(journal.configPath, "utf8");
   let restored: string;
   if (journal.version === 2) {
@@ -431,18 +634,29 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   }
   const configSnapshot = snapshotFile(journal.configPath);
   const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
+  const managedCatalogSnapshot = journal.version === 9 && journal.installed.model_catalog_json !== undefined
+    ? snapshotFile(journal.installed.model_catalog_json)
+    : undefined;
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
   try {
     atomicWriteFile(journal.configPath, restored);
     if (catalogSnapshot?.exists) rmSync(catalogSnapshot.path);
+    if (managedCatalogSnapshot?.exists) rmSync(managedCatalogSnapshot.path);
     rmSync(modelsCacheSnapshot.path, { force: true });
     rmSync(getCodexJournalPath(), { force: true });
     rmSync(getCodexJournalRecoveryPath(), { force: true });
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, configSnapshot]) {
+    for (const snapshot of [
+      recoverySnapshot,
+      journalSnapshot,
+      modelsCacheSnapshot,
+      managedCatalogSnapshot,
+      catalogSnapshot,
+      configSnapshot,
+    ]) {
       if (!snapshot) continue;
       try {
         restoreFileSnapshot(snapshot);
