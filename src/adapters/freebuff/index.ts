@@ -4,7 +4,6 @@ import {
   CodebuffClient,
   type CodebuffClientOptions,
   type MessageContent,
-  type PrintModeEvent,
   type RunState,
 } from "@codebuff/sdk";
 import { extractFreebuffTurnEnvironment } from "./environment";
@@ -341,20 +340,6 @@ export function createFreebuffAdapter(
             emit({ type: "text_delta", text: chunk.chunk, phase: "commentary" });
           }
         };
-        const handleEvent = (event: PrintModeEvent) => {
-          // Text is already delivered through handleStreamChunk by the SDK. The
-          // SDK may also expose a print-mode text event for the same response;
-          // forwarding both duplicates the assistant answer in Responses.
-          if (event.type === "tool_call") {
-            emit({ type: "text_delta", text: `\n[Freebuff] ${event.toolName}\n`, phase: "commentary" });
-          } else if (event.type === "tool_result") {
-            emit({ type: "text_delta", text: `[Freebuff] ${event.toolName} completed.\n`, phase: "commentary" });
-          } else if (event.type === "subagent_start") {
-            emit({ type: "text_delta", text: `\n[Freebuff] delegated to ${event.agentType}.\n`, phase: "commentary" });
-          } else if (event.type === "subagent_finish") {
-            emit({ type: "text_delta", text: `[Freebuff] ${event.agentType} completed.\n`, phase: "commentary" });
-          }
-        };
         const result: RunState = await withFreebuffRequestContext(
           {
             instanceId: session.instanceId,
@@ -368,7 +353,6 @@ export function createFreebuffAdapter(
             signal: controller.signal,
             costMode: "free",
             handleStreamChunk,
-            handleEvent,
           }),
         );
         if (controller.signal.aborted) {

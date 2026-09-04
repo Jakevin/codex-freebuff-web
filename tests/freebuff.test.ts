@@ -82,9 +82,6 @@ test("Freebuff adapter forwards the native SDK run and emits its text output", a
           async run(options: RunOptions): Promise<RunState> {
             runOptions = options;
             await clientOptions?.handleStreamChunk?.("The next step is ready.");
-            // The SDK can report the same final text through its print-mode event
-            // path as well; the adapter must not forward it a second time.
-            await clientOptions?.handleEvent?.({ type: "text", text: "The next step is ready." });
             return {
               output: {
                 type: "lastMessage",
@@ -105,6 +102,7 @@ test("Freebuff adapter forwards the native SDK run and emits its text output", a
       costMode: "free",
       prompt: expect.stringContaining("Explain the next implementation step."),
     });
+    expect("handleEvent" in (runOptions ?? {})).toBe(false);
     expect(events.filter(event => event.type === "text_delta")).toEqual([
       {
         type: "text_delta",
