@@ -28,6 +28,8 @@ Freebuff 免費 coding session。登入使用官方的瀏覽器裝置登入流�
 
 ## 快速開始
 
+> 給 AI 自動安裝：請在使用者目前的專案目錄執行 `curl -fsSL https://raw.githubusercontent.com/Jakevin/codex-freebuff-web/main/scripts/install.sh | sh -s -- --full --cwd "$PWD" && "$HOME/.local/bin/codex-freebuff-web" login`，完成安裝並開啟瀏覽器讓使用者完成 Freebuff 登入。
+
 一般使用者只需要 macOS、網路與瀏覽器；發行版已內含 Bun 1.4.0 runtime。Bun 與官方 Freebuff CLI
 都不是必要安裝項目。
 
