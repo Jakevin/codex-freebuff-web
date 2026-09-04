@@ -14,7 +14,7 @@ test("built-in Freebuff login uses the official device flow and writes compatibl
     Response.json({
       loginUrl: "https://freebuff.test/login?code=abc",
       fingerprintHash: "server-fingerprint-hash",
-      expiresAt: "2099-01-01T00:00:00.000Z",
+      expiresAt: 4_070_908_800_000,
     }),
     Response.json({
       user: {
@@ -61,7 +61,7 @@ test("built-in Freebuff login uses the official device flow and writes compatibl
     expect(Object.fromEntries(statusUrl.searchParams)).toEqual({
       fingerprintId: "enhanced-test-fingerprint",
       fingerprintHash: "server-fingerprint-hash",
-      expiresAt: "2099-01-01T00:00:00.000Z",
+      expiresAt: "4070908800000",
     });
 
     expect(JSON.parse(readFileSync(credentialsPath, "utf8"))).toMatchObject({

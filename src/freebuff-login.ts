@@ -139,7 +139,11 @@ function requireLoginCode(data: unknown): { loginUrl: string; fingerprintHash: s
   const record = data as Record<string, unknown>;
   const loginUrl = typeof record.loginUrl === "string" ? record.loginUrl.trim() : "";
   const fingerprintHash = typeof record.fingerprintHash === "string" ? record.fingerprintHash.trim() : "";
-  const expiresAt = typeof record.expiresAt === "string" ? record.expiresAt.trim() : "";
+  const expiresAt = typeof record.expiresAt === "string"
+    ? record.expiresAt.trim()
+    : typeof record.expiresAt === "number" && Number.isFinite(record.expiresAt)
+      ? String(record.expiresAt)
+      : "";
   if (!loginUrl || !fingerprintHash || !expiresAt) {
     throw new Error("Freebuff returned an incomplete login response");
   }
