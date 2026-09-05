@@ -9,6 +9,21 @@ export const FREEBUFF_GLM_V53_FLASH_MODEL_ID = "z-ai/glm-5.3-flash";
 /** Official Freebuff root agent paired with GLM 5.3 Flash. */
 export const FREEBUFF_GLM_V53_FLASH_AGENT = "base3-free-glm-5-3-flash";
 export const FREEBUFF_GLM_V53_FLASH_MODEL_SLUG = "freebuff/glm-5.3-flash";
+/** Official Freebuff model ID for the MiMo 2.5 route. */
+export const FREEBUFF_MIMO_MODEL_ID = "mimo/mimo-v2.5";
+/** Official Freebuff root agent paired with MiMo 2.5. */
+export const FREEBUFF_MIMO_AGENT = "base3-free-mimo";
+export const FREEBUFF_MIMO_MODEL_SLUG = "freebuff/mimo-2.5";
+/** Official Freebuff model ID for the Solar Pro 4 route. */
+export const FREEBUFF_SOLAR_PRO4_MODEL_ID = "upstage/solar-pro4";
+/** Official Freebuff root agent paired with Solar Pro 4. */
+export const FREEBUFF_SOLAR_PRO4_AGENT = "base3-free-solar-pro4";
+export const FREEBUFF_SOLAR_PRO4_MODEL_SLUG = "freebuff/solar-pro4";
+/** Official Freebuff model ID for the Muse Spark 1.3 route. */
+export const FREEBUFF_MUSE_SPARK_13_MODEL_ID = "meta/muse-spark-1.3-contributor";
+/** Official Freebuff root agent paired with Muse Spark 1.3. */
+export const FREEBUFF_MUSE_SPARK_13_AGENT = "base3-free-muse-spark-1-3";
+export const FREEBUFF_MUSE_SPARK_13_MODEL_SLUG = "freebuff/muse-spark-1.3";
 /** Conservative per-message safety limit based on the observed Freebuff Web input boundary. */
 export const FREEBUFF_INPUT_CHAR_LIMIT = 32_000;
 
@@ -52,9 +67,42 @@ export const FREEBUFF_GLM_V53_FLASH_MODEL_ROUTE: FreebuffModelRoute = {
   codexEffort: "medium",
 };
 
+export const FREEBUFF_MIMO_MODEL_ROUTE: FreebuffModelRoute = {
+  slug: FREEBUFF_MIMO_MODEL_SLUG,
+  displayName: "Freebuff — MiMo 2.5",
+  description: "Official Freebuff MiMo 2.5 coding session through the native Codex harness.",
+  agent: FREEBUFF_MIMO_AGENT,
+  backendModel: FREEBUFF_MIMO_AGENT,
+  providerModel: FREEBUFF_MIMO_MODEL_ID,
+  codexEffort: "medium",
+};
+
+export const FREEBUFF_SOLAR_PRO4_MODEL_ROUTE: FreebuffModelRoute = {
+  slug: FREEBUFF_SOLAR_PRO4_MODEL_SLUG,
+  displayName: "Freebuff — Solar Pro 4",
+  description: "Official Freebuff Solar Pro 4 limited-time trial through the native Codex harness.",
+  agent: FREEBUFF_SOLAR_PRO4_AGENT,
+  backendModel: FREEBUFF_SOLAR_PRO4_AGENT,
+  providerModel: FREEBUFF_SOLAR_PRO4_MODEL_ID,
+  codexEffort: "medium",
+};
+
+export const FREEBUFF_MUSE_SPARK_13_MODEL_ROUTE: FreebuffModelRoute = {
+  slug: FREEBUFF_MUSE_SPARK_13_MODEL_SLUG,
+  displayName: "Freebuff — Muse Spark 1.3",
+  description: "Official Freebuff Muse Spark 1.3 coding session through the native Codex harness.",
+  agent: FREEBUFF_MUSE_SPARK_13_AGENT,
+  backendModel: FREEBUFF_MUSE_SPARK_13_AGENT,
+  providerModel: FREEBUFF_MUSE_SPARK_13_MODEL_ID,
+  codexEffort: "medium",
+};
+
 export const FREEBUFF_MODEL_ROUTES: readonly FreebuffModelRoute[] = [
   FREEBUFF_MODEL_ROUTE,
   FREEBUFF_GLM_V53_FLASH_MODEL_ROUTE,
+  FREEBUFF_MIMO_MODEL_ROUTE,
+  FREEBUFF_SOLAR_PRO4_MODEL_ROUTE,
+  FREEBUFF_MUSE_SPARK_13_MODEL_ROUTE,
 ];
 
 export function isFreebuffModelSlug(modelId: string): boolean {

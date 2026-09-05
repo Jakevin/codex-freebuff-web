@@ -24,7 +24,16 @@ import {
   FREEBUFF_GLM_V53_FLASH_MODEL_ID,
   FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
   FREEBUFF_INPUT_CHAR_LIMIT,
+  FREEBUFF_MIMO_AGENT,
+  FREEBUFF_MIMO_MODEL_ID,
+  FREEBUFF_MIMO_MODEL_SLUG,
+  FREEBUFF_MUSE_SPARK_13_AGENT,
+  FREEBUFF_MUSE_SPARK_13_MODEL_ID,
+  FREEBUFF_MUSE_SPARK_13_MODEL_SLUG,
   FREEBUFF_MODEL_ID,
+  FREEBUFF_SOLAR_PRO4_AGENT,
+  FREEBUFF_SOLAR_PRO4_MODEL_ID,
+  FREEBUFF_SOLAR_PRO4_MODEL_SLUG,
   requireFreebuffModelRoute,
 } from "../src/freebuff-models";
 
@@ -337,6 +346,9 @@ test("Freebuff exposes and routes the official GLM 5.3 Flash model", async () =>
   expect(availableFreebuffModelRoutes().map(route => route.slug)).toEqual([
     "freebuff/base",
     FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
+    FREEBUFF_MIMO_MODEL_SLUG,
+    FREEBUFF_SOLAR_PRO4_MODEL_SLUG,
+    FREEBUFF_MUSE_SPARK_13_MODEL_SLUG,
   ]);
   expect(requireFreebuffModelRoute(FREEBUFF_GLM_V53_FLASH_MODEL_SLUG)).toMatchObject({
     providerModel: FREEBUFF_GLM_V53_FLASH_MODEL_ID,
@@ -371,6 +383,21 @@ test("Freebuff exposes and routes the official GLM 5.3 Flash model", async () =>
   });
   const body = await response.json() as { model: string };
   expect(body.model).toBe(FREEBUFF_GLM_V53_FLASH_MODEL_SLUG);
+});
+
+test("Freebuff exposes the official MiMo, Solar, and Muse model mappings", () => {
+  expect(requireFreebuffModelRoute(FREEBUFF_MIMO_MODEL_SLUG)).toMatchObject({
+    providerModel: FREEBUFF_MIMO_MODEL_ID,
+    agent: FREEBUFF_MIMO_AGENT,
+  });
+  expect(requireFreebuffModelRoute(FREEBUFF_SOLAR_PRO4_MODEL_SLUG)).toMatchObject({
+    providerModel: FREEBUFF_SOLAR_PRO4_MODEL_ID,
+    agent: FREEBUFF_SOLAR_PRO4_AGENT,
+  });
+  expect(requireFreebuffModelRoute(FREEBUFF_MUSE_SPARK_13_MODEL_SLUG)).toMatchObject({
+    providerModel: FREEBUFF_MUSE_SPARK_13_MODEL_ID,
+    agent: FREEBUFF_MUSE_SPARK_13_AGENT,
+  });
 });
 
 test("Freebuff adapter supplies the GLM root definition to the SDK", async () => {

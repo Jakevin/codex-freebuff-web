@@ -3,7 +3,13 @@ import {
   FREEBUFF_AGENT,
   FREEBUFF_GLM_V53_FLASH_AGENT,
   FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+  FREEBUFF_MIMO_AGENT,
+  FREEBUFF_MIMO_MODEL_ID,
+  FREEBUFF_MUSE_SPARK_13_AGENT,
+  FREEBUFF_MUSE_SPARK_13_MODEL_ID,
   FREEBUFF_MODEL_ID,
+  FREEBUFF_SOLAR_PRO4_AGENT,
+  FREEBUFF_SOLAR_PRO4_MODEL_ID,
 } from "../../freebuff-models";
 
 /**
@@ -79,8 +85,29 @@ export const FREEBUFF_GLM_ROOT_AGENT_DEFINITION = createFreebuffRootAgentDefinit
   "Buffy on GLM 5.3 Flash",
 );
 
+export const FREEBUFF_MIMO_ROOT_AGENT_DEFINITION = createFreebuffRootAgentDefinition(
+  FREEBUFF_MIMO_AGENT,
+  FREEBUFF_MIMO_MODEL_ID,
+  "Buffy on MiMo 2.5",
+);
+
+export const FREEBUFF_SOLAR_PRO4_ROOT_AGENT_DEFINITION = createFreebuffRootAgentDefinition(
+  FREEBUFF_SOLAR_PRO4_AGENT,
+  FREEBUFF_SOLAR_PRO4_MODEL_ID,
+  "Buffy on Solar Pro 4",
+);
+
+export const FREEBUFF_MUSE_SPARK_13_ROOT_AGENT_DEFINITION = createFreebuffRootAgentDefinition(
+  FREEBUFF_MUSE_SPARK_13_AGENT,
+  FREEBUFF_MUSE_SPARK_13_MODEL_ID,
+  "Buffy on Muse Spark 1.3",
+);
+
 export function freebuffRootAgentDefinitionFor(agent: string): AgentDefinition | undefined {
   if (agent === FREEBUFF_AGENT) return FREEBUFF_ROOT_AGENT_DEFINITION;
   if (agent === FREEBUFF_GLM_V53_FLASH_AGENT) return FREEBUFF_GLM_ROOT_AGENT_DEFINITION;
+  if (agent === FREEBUFF_MIMO_AGENT) return FREEBUFF_MIMO_ROOT_AGENT_DEFINITION;
+  if (agent === FREEBUFF_SOLAR_PRO4_AGENT) return FREEBUFF_SOLAR_PRO4_ROOT_AGENT_DEFINITION;
+  if (agent === FREEBUFF_MUSE_SPARK_13_AGENT) return FREEBUFF_MUSE_SPARK_13_ROOT_AGENT_DEFINITION;
   return undefined;
 }
