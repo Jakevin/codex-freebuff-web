@@ -53,13 +53,24 @@ function responseCode(body: JsonObject | undefined): string | undefined {
   return status;
 }
 
+function retryHint(body: JsonObject | undefined): string {
+  const resetAt = body && stringField(body, "resetAt");
+  if (resetAt) return ` The limit resets at ${resetAt}.`;
+  const retryAfterMs = body?.retryAfterMs;
+  if (typeof retryAfterMs === "number" && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return ` Retry after ${Math.ceil(retryAfterMs / 1_000)} seconds.`;
+  }
+  return "";
+}
+
 function sessionFailureMessage(body: JsonObject | undefined, statusCode: number): string {
   const status = responseCode(body);
+  const retry = retryHint(body);
   if (statusCode === 401) {
     return "Freebuff login was rejected or expired. Run `codex-freebuff-web login`, finish the browser login, and retry.";
   }
   const supplied = body && stringField(body, "message");
-  if (supplied) return `Freebuff session admission failed: ${supplied}`;
+  if (supplied) return `Freebuff session admission failed: ${supplied}${retry}`;
   switch (status) {
     case "country_blocked":
       return "Freebuff is not available in the current country or network.";
@@ -70,7 +81,7 @@ function sessionFailureMessage(body: JsonObject | undefined, statusCode: number)
     case "rate_limited":
     case "spend_limited":
     case "ip_capped":
-      return "Freebuff has reached its current free-session limit. Retry after the limit resets.";
+      return `Freebuff has reached its current free-session limit.${retry || " Retry after the limit resets."}`;
     case "banned":
       return "This Freebuff account is not allowed to start a session.";
     default:
@@ -111,6 +122,7 @@ export class FreebuffSessionManager {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private readonly refreshBeforeMs: number;
+  // Freebuff allows only one active instance per account, even when the requested model changes.
   private readonly active = new Map<string, OwnedSession>();
   private readonly pending = new Map<string, Promise<ActiveFreebuffSession>>();
 
@@ -130,29 +142,35 @@ export class FreebuffSessionManager {
     const requestedModel = model.trim() || FREEBUFF_MODEL_ID;
     if (!authToken) throw new FreebuffSessionError("Freebuff auth token is empty.", 401, "unauthorized");
 
-    const key = `${authToken}\u0000${requestedModel}`;
-    const current = this.active.get(key);
-    if (current && !this.isExpired(current)) return current;
-    if (current) this.active.delete(key);
+    const key = authToken;
+    for (;;) {
+      const inFlight = this.pending.get(key);
+      if (inFlight) {
+        const admitted = await inFlight;
+        if (admitted.model === requestedModel && !this.isExpired(admitted)) return admitted;
+        continue;
+      }
 
-    const inFlight = this.pending.get(key);
-    if (inFlight) return inFlight;
-    const admission = this.admit(authToken, requestedModel, signal);
-    this.pending.set(key, admission);
-    try {
-      return await admission;
-    } finally {
-      if (this.pending.get(key) === admission) this.pending.delete(key);
+      const current = this.active.get(key);
+      if (current && current.model === requestedModel && !this.isExpired(current)) return current;
+      // Keep a valid session for the old model until the new admission succeeds. A rate-limited
+      // model switch must not take a working session offline.
+      if (current && this.isExpired(current)) this.active.delete(key);
+
+      const admission = this.admit(authToken, requestedModel, signal);
+      this.pending.set(key, admission);
+      try {
+        return await admission;
+      } finally {
+        if (this.pending.get(key) === admission) this.pending.delete(key);
+      }
     }
   }
 
   invalidate(token: string, model?: string): void {
-    const prefix = `${token.trim()}\u0000`;
-    for (const key of this.active.keys()) {
-      if (model
-        ? key === `${prefix}${model.trim()}`
-        : key.startsWith(prefix)) this.active.delete(key);
-    }
+    const key = token.trim();
+    const current = this.active.get(key);
+    if (current && (!model || current.model === model.trim())) this.active.delete(key);
   }
 
   async releaseAll(): Promise<void> {
@@ -201,7 +219,7 @@ export class FreebuffSessionManager {
       );
     }
     const session = activeSession(body, model);
-    this.active.set(`${token}\u0000${model}`, { ...session, token });
+    this.active.set(token, { ...session, token });
     return session;
   }
 

@@ -29,6 +29,7 @@ import {
   type FreebuffFetch,
 } from "../../freebuff-ads";
 import {
+  FreebuffSessionError,
   getFreebuffSessionManager,
   type ActiveFreebuffSession,
   type FreebuffSessionManager,
@@ -236,6 +237,22 @@ function readOnlyOverrides(): NonNullable<CodebuffClientOptions["overrideTools"]
   } as NonNullable<CodebuffClientOptions["overrideTools"]>;
 }
 
+function isSupersededSessionError(error: unknown, seen = new Set<object>()): boolean {
+  if (typeof error === "string") return /session_superseded|another instance of freebuff|precondition required/i.test(error);
+  if (error === null || typeof error !== "object" || seen.has(error)) return false;
+  seen.add(error);
+  const value = error as Record<string, unknown>;
+  if (value.statusCode === 409 || value.statusCode === 428) return true;
+  return ["message", "responseBody", "lastError", "cause", "errors"].some(key =>
+    isSupersededSessionError(value[key], seen));
+}
+
+function supersededSessionError(): Error {
+  return new Error(
+    "Freebuff session was taken over by another running client. Close the official Freebuff CLI, Web Chat session, or another bridge process, then retry.",
+  );
+}
+
 export interface FreebuffAdapterDependencies {
   createClient?: (options: CodebuffClientOptions) => Pick<CodebuffClient, "run">;
   fetchImpl?: FreebuffFetch;
@@ -291,10 +308,11 @@ export function createFreebuffAdapter(
           throw new Error(freebuffLoginRequiredMessage(credentialsPath ?? "~/.config/manicode/credentials.json"));
         }
         const sessionModel = provider.freebuff?.model ?? FREEBUFF_MODEL_ID;
-        const session = await (dependencies.ensureSession
+        const sessionManager = dependencies.sessionManager ?? getFreebuffSessionManager(provider.baseUrl);
+        const ensureSession = () => dependencies.ensureSession
           ? dependencies.ensureSession(authToken, sessionModel, controller.signal)
-          : (dependencies.sessionManager ?? getFreebuffSessionManager(provider.baseUrl))
-            .ensure(authToken, sessionModel, controller.signal));
+          : sessionManager.ensure(authToken, sessionModel, controller.signal);
+        let session = await ensureSession();
         if (controller.signal.aborted) {
           emit({ type: "incomplete", reason: "cancelled", message: "Freebuff run cancelled", usage, retryable: false });
           return;
@@ -325,9 +343,6 @@ export function createFreebuffAdapter(
             : {}),
           ...(context.sandbox === "readOnly" ? { overrideTools: readOnlyOverrides() } : {}),
         };
-        const client = dependencies.createClient
-          ? dependencies.createClient(clientOptions)
-          : new CodebuffClient(clientOptions);
         const handleStreamChunk: NonNullable<CodebuffClientOptions["handleStreamChunk"]> = chunk => {
           if (typeof chunk === "string") {
             if (chunk) {
@@ -340,21 +355,41 @@ export function createFreebuffAdapter(
             emit({ type: "text_delta", text: chunk.chunk, phase: "commentary" });
           }
         };
-        const result: RunState = await withFreebuffRequestContext(
-          {
-            instanceId: session.instanceId,
-            traceSessionId: randomUUID(),
-            ...(parsed.options.reasoning ? { reasoningEffort: parsed.options.reasoning } : {}),
-          },
-          () => client.run({
-            agent,
-            prompt,
-            ...(content ? { content } : {}),
-            signal: controller.signal,
-            costMode: "free",
-            handleStreamChunk,
-          }),
-        );
+        const runAgent = async (activeSession: ActiveFreebuffSession): Promise<RunState> => {
+          const client = dependencies.createClient
+            ? dependencies.createClient(clientOptions)
+            : new CodebuffClient(clientOptions);
+          return await withFreebuffRequestContext(
+            {
+              instanceId: activeSession.instanceId,
+              traceSessionId: randomUUID(),
+              ...(parsed.options.reasoning ? { reasoningEffort: parsed.options.reasoning } : {}),
+            },
+            () => client.run({
+              agent,
+              prompt,
+              ...(content ? { content } : {}),
+              signal: controller.signal,
+              costMode: "free",
+              handleStreamChunk,
+            }),
+          );
+        };
+        let result: RunState;
+        try {
+          result = await runAgent(session);
+        } catch (error) {
+          if (!isSupersededSessionError(error)) throw error;
+          if (emittedText) throw supersededSessionError();
+          sessionManager.invalidate(authToken, sessionModel);
+          try {
+            session = await ensureSession();
+            result = await runAgent(session);
+          } catch (retryError) {
+            if (isSupersededSessionError(retryError)) throw supersededSessionError();
+            throw retryError;
+          }
+        }
         if (controller.signal.aborted) {
           emit({ type: "incomplete", reason: "cancelled", message: "Freebuff run cancelled", usage, retryable: false });
           return;
@@ -396,6 +431,18 @@ export function createFreebuffAdapter(
       } catch (error) {
         if (controller.signal.aborted) {
           emit({ type: "incomplete", reason: "cancelled", message: "Freebuff run cancelled", usage, retryable: false });
+        } else if (error instanceof FreebuffSessionError) {
+          emit({
+            type: "error",
+            message: error.message,
+            ...(error.statusCode !== undefined ? { status: error.statusCode } : {}),
+            ...(error.statusCode === 401
+              ? { errorType: "authentication_error", code: "invalid_api_key" }
+              : error.statusCode === 429
+                ? { errorType: "rate_limit_error", code: "rate_limit_exceeded" }
+                : {}),
+            retryable: false,
+          });
         } else {
           emit({ type: "error", message: error instanceof Error ? error.message : String(error), retryable: false });
         }

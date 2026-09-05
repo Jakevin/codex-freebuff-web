@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { createFreebuffAdapter } from "../src/adapters/freebuff";
 import { FREEBUFF_AD_MARKER, FREEBUFF_HOUSE_AD, renderFreebuffAd } from "../src/freebuff-ads";
 import { extractFreebuffTurnEnvironment } from "../src/adapters/freebuff/environment";
-import { FreebuffSessionManager } from "../src/adapters/freebuff/session";
+import { FreebuffSessionError, FreebuffSessionManager } from "../src/adapters/freebuff/session";
 import { resolveFreebuffAuth } from "../src/freebuff-auth";
 import { defaultConfig, loadConfigForSetup, providerConfig } from "../src/config";
 import {
@@ -24,6 +24,7 @@ import {
   FREEBUFF_GLM_V53_FLASH_MODEL_ID,
   FREEBUFF_GLM_V53_FLASH_MODEL_SLUG,
   FREEBUFF_INPUT_CHAR_LIMIT,
+  FREEBUFF_MODEL_ID,
   requireFreebuffModelRoute,
 } from "../src/freebuff-models";
 
@@ -562,6 +563,36 @@ test("Freebuff reports the manual login step instead of asking for an API key", 
   }
 });
 
+test("Freebuff session limits become structured non-retryable errors", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-freebuff-session-limit-"));
+  try {
+    const config = defaultConfig("full");
+    config.freebuff = { apiKey: "cb-test-key", cwd: root };
+    const adapter = createFreebuffAdapter(providerConfig(config), {
+      ensureSession: async () => {
+        throw new FreebuffSessionError(
+          "Freebuff has reached its current free-session limit. The limit resets at 2026-09-06T07:00:00.000Z.",
+          429,
+          "rate_limited",
+        );
+      },
+    });
+    const events: AdapterEvent[] = [];
+
+    await adapter.runTurn(parsedRequest(), { headers: new Headers() }, event => events.push(event));
+
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      status: 429,
+      errorType: "rate_limit_error",
+      code: "rate_limit_exceeded",
+      retryable: false,
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Freebuff session admission uses the official bearer and model headers", async () => {
   let request: { url: string; init?: RequestInit } | undefined;
   const manager = new FreebuffSessionManager({
@@ -586,4 +617,31 @@ test("Freebuff session admission uses the official bearer and model headers", as
   expect(request?.init?.method).toBe("POST");
   expect(new Headers(request?.init?.headers).get("authorization")).toBe("Bearer official-session-token");
   expect(new Headers(request?.init?.headers).get("x-freebuff-model")).toBe("deepseek/deepseek-v4-flash");
+});
+
+test("Freebuff session manager replaces the one account session when the model changes", async () => {
+  const admissions: string[] = [];
+  const manager = new FreebuffSessionManager({
+    baseUrl: "https://codebuff.com",
+    fetch: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const model = new Headers(init?.headers).get("x-freebuff-model") ?? "";
+      admissions.push(model);
+      return Response.json({
+        status: "active",
+        instanceId: `instance-${admissions.length}`,
+        model,
+      });
+    }) as typeof fetch,
+  });
+
+  await manager.ensure("official-session-token", FREEBUFF_MODEL_ID);
+  await manager.ensure("official-session-token", FREEBUFF_GLM_V53_FLASH_MODEL_ID);
+  await manager.ensure("official-session-token", FREEBUFF_GLM_V53_FLASH_MODEL_ID);
+  await manager.ensure("official-session-token", FREEBUFF_MODEL_ID);
+
+  expect(admissions).toEqual([
+    FREEBUFF_MODEL_ID,
+    FREEBUFF_GLM_V53_FLASH_MODEL_ID,
+    FREEBUFF_MODEL_ID,
+  ]);
 });
